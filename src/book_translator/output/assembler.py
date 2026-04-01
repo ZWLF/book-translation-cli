@@ -15,10 +15,12 @@ def assemble_output_text(
 
     parts: list[str] = []
     for chapter in chapters:
-        parts.append(chapter.title)
         chapter_chunks = sorted(
             chunks_by_chapter.get(chapter.chapter_id, []), key=lambda item: item.chunk_index
         )
+        if not chapter_chunks:
+            continue
+        parts.append(chapter.title)
         for chunk in chapter_chunks:
             if chunk.chunk_id in translations:
                 parts.append(translations[chunk.chunk_id].translated_text)

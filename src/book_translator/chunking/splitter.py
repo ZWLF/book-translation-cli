@@ -10,6 +10,9 @@ SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
 
 
 def split_chapter_into_chunks(chapter: Chapter, max_words: int = 3000) -> list[Chunk]:
+    if not chapter.text.strip():
+        return []
+
     parts = _paragraph_aware_units(chapter.text, max_words=max_words)
     chunks: list[Chunk] = []
     current: list[str] = []

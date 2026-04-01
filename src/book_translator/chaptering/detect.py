@@ -47,19 +47,17 @@ def detect_chapters(
 
 
 def _split_by_titles(raw_text: str, titles: list[str]) -> list[Chapter]:
-    matches: list[tuple[str, int, int]] = []
-    search_start = 0
-    for title in titles:
-        pattern = re.compile(rf"(?im)^\s*{re.escape(title)}\s*$")
-        match = pattern.search(raw_text, search_start)
-        if not match:
-            return []
-        matches.append((title, match.start(), match.end()))
-        search_start = match.end()
+    matched_occurrences = _find_title_occurrences(raw_text, titles)
+    if not matched_occurrences:
+        return []
 
     chapters: list[Chapter] = []
-    for index, (title, _start, end) in enumerate(matches):
-        next_start = matches[index + 1][1] if index + 1 < len(matches) else len(raw_text)
+    for index, (title, _start, end) in enumerate(matched_occurrences):
+        next_start = (
+            matched_occurrences[index + 1][1]
+            if index + 1 < len(matched_occurrences)
+            else len(raw_text)
+        )
         body = raw_text[end:next_start].strip()
         chapters.append(
             Chapter(
@@ -70,6 +68,31 @@ def _split_by_titles(raw_text: str, titles: list[str]) -> list[Chapter]:
             )
         )
     return chapters
+
+
+def _find_title_occurrences(raw_text: str, titles: list[str]) -> list[tuple[str, int, int]]:
+    occurrence_sets: list[list[tuple[int, int]]] = []
+    for title in titles:
+        pattern = re.compile(rf"(?im)^\s*{re.escape(title)}\s*$")
+        matches = [(match.start(), match.end()) for match in pattern.finditer(raw_text)]
+        if not matches:
+            return []
+        occurrence_sets.append(matches)
+
+    selected: list[tuple[str, int, int]] = []
+    upper_bound = len(raw_text) + 1
+    for title, matches in zip(reversed(titles), reversed(occurrence_sets), strict=True):
+        chosen = next(
+            ((start, end) for start, end in reversed(matches) if start < upper_bound),
+            None,
+        )
+        if chosen is None:
+            return []
+        start, end = chosen
+        selected.append((title, start, end))
+        upper_bound = start
+    selected.reverse()
+    return selected
 
 
 def _split_by_headings(raw_text: str) -> list[Chapter]:
