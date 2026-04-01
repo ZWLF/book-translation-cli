@@ -34,3 +34,16 @@ def test_splitter_breaks_oversized_paragraph_by_sentence() -> None:
 
     assert len(chunks) == 3
     assert chunks[0].source_text.endswith("five.")
+
+
+def test_splitter_skips_empty_chapter_text() -> None:
+    chapter = Chapter(
+        chapter_id="c1",
+        chapter_index=0,
+        title="Chapter 1",
+        text="   \n\n   ",
+    )
+
+    chunks = split_chapter_into_chunks(chapter, max_words=5)
+
+    assert chunks == []

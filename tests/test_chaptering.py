@@ -55,3 +55,25 @@ def test_detect_chapters_uses_manual_toc_titles() -> None:
     chapters = detect_chapters(extracted, strategy="manual", manual_titles=["Part One", "Part Two"])
 
     assert [chapter.title for chapter in chapters] == ["Part One", "Part Two"]
+
+
+def test_detect_chapters_ignores_toc_page_occurrences() -> None:
+    extracted = ExtractedBook(
+        title="TOC Duplicate",
+        raw_text=(
+            "Contents\n"
+            "Chapter 1\n"
+            "Chapter 2\n\n"
+            "Chapter 1\n"
+            "Actual first body.\n\n"
+            "Chapter 2\n"
+            "Actual second body.\n"
+        ),
+        toc=[TocEntry(title="Chapter 1"), TocEntry(title="Chapter 2")],
+    )
+
+    chapters = detect_chapters(extracted, strategy="toc-first")
+
+    assert [chapter.title for chapter in chapters] == ["Chapter 1", "Chapter 2"]
+    assert chapters[0].text == "Actual first body."
+    assert chapters[1].text == "Actual second body."
