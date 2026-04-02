@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from book_translator.models import Chunk, Manifest, TranslationResult
@@ -38,12 +38,12 @@ class PrintableBook:
 
 def build_printable_book(
     *,
-    manifest: Manifest,
-    summary: dict[str, Any],
-    chunks: list[Chunk],
-    translations: dict[str, TranslationResult],
+        manifest: Manifest,
+        summary: dict[str, Any],
+        chunks: list[Chunk],
+        translations: dict[str, TranslationResult],
 ) -> PrintableBook:
-    title_en, author = _parse_title_and_author(Path(manifest.source_path).stem)
+    title_en, author = _parse_title_and_author(_source_stem(manifest.source_path))
     grouped: dict[str, dict[str, Any]] = {}
 
     for chunk in sorted(chunks, key=lambda item: (item.chapter_index, item.chunk_index)):
@@ -134,6 +134,7 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import mm
         from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import (
             BaseDocTemplate,
@@ -150,7 +151,7 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
             "reportlab is required for polished PDF output. Install project dependencies first."
         ) from exc
 
-    fonts = _register_book_fonts(pdfmetrics, TTFont)
+    fonts = _register_book_fonts(pdfmetrics, TTFont, UnicodeCIDFont)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     styles = getSampleStyleSheet()
@@ -461,6 +462,12 @@ def _parse_title_and_author(stem: str) -> tuple[str, str | None]:
     return match.group("title").strip(), match.group("author").strip()
 
 
+def _source_stem(source_path: str) -> str:
+    if re.match(r"^[A-Za-z]:\\", source_path) or "\\" in source_path:
+        return PureWindowsPath(source_path).stem
+    return PurePosixPath(source_path).stem
+
+
 def _truncate_for_header(text: str, max_length: int = 22) -> str:
     if len(text) <= max_length:
         return text
@@ -476,7 +483,7 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
-def _register_book_fonts(pdfmetrics: Any, TTFont: Any) -> dict[str, str]:
+def _register_book_fonts(pdfmetrics: Any, TTFont: Any, UnicodeCIDFont: Any) -> dict[str, str]:
     font_candidates = {
         "title": [
             ("BookTitle", Path(r"C:\Windows\Fonts\STZHONGS.TTF")),
@@ -505,6 +512,11 @@ def _register_book_fonts(pdfmetrics: Any, TTFont: Any) -> dict[str, str]:
             except Exception:
                 continue
         if role not in registered:
-            raise RuntimeError(f"Unable to register a usable font for {role}.")
+            try:
+                if "STSong-Light" not in pdfmetrics.getRegisteredFontNames():
+                    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+                registered[role] = "STSong-Light"
+            except Exception as exc:
+                raise RuntimeError(f"Unable to register a usable font for {role}.") from exc
 
     return registered
