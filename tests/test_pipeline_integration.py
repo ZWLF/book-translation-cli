@@ -2,7 +2,9 @@ from pathlib import Path
 
 import pytest
 from ebooklib import epub
+from typer.testing import CliRunner
 
+from book_translator.cli import app
 from book_translator.config import RunConfig
 from book_translator.pipeline import process_book
 from book_translator.providers.base import BaseProvider
@@ -48,13 +50,35 @@ async def test_process_book_writes_outputs(tmp_path: Path) -> None:
     summary = await process_book(
         input_path=input_path,
         output_root=output_dir,
-        config=RunConfig(provider="openai", model="gpt-4o-mini"),
+        config=RunConfig(provider="openai", model="gpt-4o-mini", render_pdf=True),
         provider=FakeProvider("openai", "gpt-4o-mini"),
     )
 
     book_dir = output_dir / "sample"
     assert summary.successful_chunks == 2
     assert (book_dir / "translated.txt").exists()
+    assert (book_dir / "translated.pdf").exists()
     output_text = (book_dir / "translated.txt").read_text(encoding="utf-8")
     assert "Chapter 1" in output_text
     assert "译文::Hello world." in output_text
+
+
+@pytest.mark.asyncio
+async def test_render_pdf_command_uses_existing_workspace(tmp_path: Path) -> None:
+    input_path = tmp_path / "sample.epub"
+    output_dir = tmp_path / "out"
+    _build_sample_epub(input_path)
+
+    await process_book(
+        input_path=input_path,
+        output_root=output_dir,
+        config=RunConfig(provider="openai", model="gpt-4o-mini", render_pdf=False),
+        provider=FakeProvider("openai", "gpt-4o-mini"),
+    )
+
+    book_dir = output_dir / "sample"
+    runner = CliRunner()
+    result = runner.invoke(app, ["render-pdf", "--workspace", str(book_dir)])
+
+    assert result.exit_code == 0
+    assert (book_dir / "translated.pdf").exists()

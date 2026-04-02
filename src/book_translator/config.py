@@ -30,6 +30,7 @@ class RunConfig(BaseModel):
     chapter_strategy: str = "toc-first"
     manual_toc_path: Path | None = None
     chunk_size: int = 3000
+    render_pdf: bool = True
     request_timeout_seconds: float = 60.0
     max_attempts: int = 4
 

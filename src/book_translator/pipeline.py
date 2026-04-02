@@ -13,6 +13,7 @@ from book_translator.extractors.epub import extract_epub
 from book_translator.extractors.pdf import extract_pdf
 from book_translator.models import BookRunSummary, Manifest
 from book_translator.output.assembler import assemble_output_text
+from book_translator.output.polished_pdf import build_printable_book, render_polished_pdf
 from book_translator.providers.base import BaseProvider
 from book_translator.providers.gemini_provider import GeminiProvider
 from book_translator.providers.openai_provider import OpenAIProvider
@@ -142,6 +143,14 @@ async def process_book(
         avg_chunk_latency_ms=round(avg_latency, 3),
     )
     workspace.write_summary(summary.model_dump())
+    if config.render_pdf and successful_chunks:
+        printable_book = build_printable_book(
+            manifest=workspace.read_manifest(),
+            summary=summary.model_dump(),
+            chunks=chunks,
+            translations=translations,
+        )
+        render_polished_pdf(printable_book, workspace.pdf_output_path)
     return summary
 
 
