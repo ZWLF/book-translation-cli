@@ -78,3 +78,20 @@ def test_workspace_rejects_resume_when_config_changes(tmp_path: Path) -> None:
             model="gpt-4o-mini",
             config_fingerprint="cfg-2",
         )
+
+
+def test_workspace_persists_title_translations(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "book")
+    workspace.root.mkdir(parents=True, exist_ok=True)
+
+    workspace.write_title_translations(
+        {
+            "chapter-1": "痴迷于成功",
+            "chapter-2": "像物理学家一样思考",
+        }
+    )
+
+    assert workspace.read_title_translations() == {
+        "chapter-1": "痴迷于成功",
+        "chapter-2": "像物理学家一样思考",
+    }

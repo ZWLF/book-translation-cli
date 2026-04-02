@@ -14,6 +14,7 @@ from book_translator.extractors.pdf import extract_pdf
 from book_translator.models import BookRunSummary, Manifest
 from book_translator.output.assembler import assemble_output_text
 from book_translator.output.polished_pdf import build_printable_book, render_polished_pdf
+from book_translator.output.title_enrichment import enrich_missing_titles
 from book_translator.providers.base import BaseProvider
 from book_translator.providers.gemini_provider import GeminiProvider
 from book_translator.providers.openai_provider import OpenAIProvider
@@ -100,58 +101,66 @@ async def process_book(
             max_concurrency=config.max_concurrency,
             max_attempts=config.max_attempts,
         )
+        for result in results:
+            workspace.append_translation(result)
+        workspace.write_errors(errors)
+
+        translations = workspace.load_translations()
+        output_text = assemble_output_text(
+            chapters=chapters,
+            chunks=chunks,
+            translations=translations,
+            failed_chunk_ids={str(error["chunk_id"]) for error in errors},
+        )
+        workspace.output_path.write_text(output_text, encoding="utf-8")
+
+        successful_chunks = len(translations)
+        failed_chunks = len(errors)
+        input_tokens = sum(result.input_tokens for result in translations.values())
+        output_tokens = sum(result.output_tokens for result in translations.values())
+        total_cost = sum(result.estimated_cost_usd for result in translations.values())
+        duration_seconds = time.perf_counter() - started
+        avg_latency = (
+            sum(result.latency_ms for result in translations.values()) / successful_chunks
+            if successful_chunks
+            else 0.0
+        )
+        summary = BookRunSummary(
+            source_path=str(input_path),
+            provider=config.provider,
+            model=config.resolved_model(),
+            total_chapters=len(chapters),
+            total_chunks=len(chunks),
+            successful_chunks=successful_chunks,
+            failed_chunks=failed_chunks,
+            estimated_input_tokens=input_tokens,
+            estimated_output_tokens=output_tokens,
+            estimated_cost_usd=round(total_cost, 6),
+            duration_seconds=round(duration_seconds, 3),
+            avg_chunk_latency_ms=round(avg_latency, 3),
+        )
+        workspace.write_summary(summary.model_dump())
+        if config.render_pdf and successful_chunks:
+            printable_book = build_printable_book(
+                manifest=workspace.read_manifest(),
+                summary=summary.model_dump(),
+                chunks=chunks,
+                translations=translations,
+            )
+            printable_book = await enrich_missing_titles(
+                book=printable_book,
+                workspace=workspace,
+                provider_name=config.provider,
+                model=config.resolved_model(),
+                api_key=config.resolved_api_key() if provider is None else None,
+                max_concurrency=config.max_concurrency,
+                max_attempts=config.max_attempts,
+            )
+            render_polished_pdf(printable_book, workspace.pdf_output_path)
+        return summary
     finally:
         if provider is None:
             await provider_instance.aclose()
-
-    for result in results:
-        workspace.append_translation(result)
-    workspace.write_errors(errors)
-
-    translations = workspace.load_translations()
-    output_text = assemble_output_text(
-        chapters=chapters,
-        chunks=chunks,
-        translations=translations,
-        failed_chunk_ids={str(error["chunk_id"]) for error in errors},
-    )
-    workspace.output_path.write_text(output_text, encoding="utf-8")
-
-    successful_chunks = len(translations)
-    failed_chunks = len(errors)
-    input_tokens = sum(result.input_tokens for result in translations.values())
-    output_tokens = sum(result.output_tokens for result in translations.values())
-    total_cost = sum(result.estimated_cost_usd for result in translations.values())
-    duration_seconds = time.perf_counter() - started
-    avg_latency = (
-        sum(result.latency_ms for result in translations.values()) / successful_chunks
-        if successful_chunks
-        else 0.0
-    )
-    summary = BookRunSummary(
-        source_path=str(input_path),
-        provider=config.provider,
-        model=config.resolved_model(),
-        total_chapters=len(chapters),
-        total_chunks=len(chunks),
-        successful_chunks=successful_chunks,
-        failed_chunks=failed_chunks,
-        estimated_input_tokens=input_tokens,
-        estimated_output_tokens=output_tokens,
-        estimated_cost_usd=round(total_cost, 6),
-        duration_seconds=round(duration_seconds, 3),
-        avg_chunk_latency_ms=round(avg_latency, 3),
-    )
-    workspace.write_summary(summary.model_dump())
-    if config.render_pdf and successful_chunks:
-        printable_book = build_printable_book(
-            manifest=workspace.read_manifest(),
-            summary=summary.model_dump(),
-            chunks=chunks,
-            translations=translations,
-        )
-        render_polished_pdf(printable_book, workspace.pdf_output_path)
-    return summary
 
 
 def _extract_book(path: Path):

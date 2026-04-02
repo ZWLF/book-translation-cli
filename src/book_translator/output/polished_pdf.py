@@ -51,8 +51,10 @@ def build_printable_book(
     summary: dict[str, Any],
     chunks: list[Chunk],
     translations: dict[str, TranslationResult],
+    title_overrides: dict[str, str] | None = None,
 ) -> PrintableBook:
     title_en, author = _parse_title_and_author(_source_stem(manifest.source_path))
+    title_overrides = title_overrides or {}
     grouped: dict[str, dict[str, Any]] = {}
 
     for chunk in sorted(chunks, key=lambda item: (item.chapter_index, item.chunk_index)):
@@ -109,11 +111,19 @@ def build_printable_book(
 
             if len(cleaned_lines) == 1 and _looks_like_section_heading(cleaned_lines[0]):
                 printable_blocks.append(
-                    PrintableBlock(kind="section_heading", text=cleaned_lines[0])
+                    PrintableBlock(
+                        kind="section_heading",
+                        text=_tighten_mixed_text_spacing(cleaned_lines[0]),
+                    )
                 )
                 continue
 
-            printable_blocks.append(PrintableBlock(kind="paragraph", text="".join(cleaned_lines)))
+            printable_blocks.append(
+                PrintableBlock(
+                    kind="paragraph",
+                    text=_tighten_mixed_text_spacing("".join(cleaned_lines)),
+                )
+            )
 
         if not printable_blocks:
             continue
@@ -123,11 +133,20 @@ def build_printable_book(
                 chapter_id=entry["chapter_id"],
                 chapter_index=entry["chapter_index"],
                 source_title=entry["source_title"],
-                title_kind=_classify_title_kind(entry["source_title"], chapter_title_zh),
+                title_kind=_classify_title_kind(
+                    entry["source_title"],
+                    title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+                ),
                 title_en=entry["source_title"],
-                title_zh=chapter_title_zh,
-                header_title=_build_header_title(entry["source_title"], chapter_title_zh),
-                toc_label_html=_build_toc_label_html(entry["source_title"], chapter_title_zh),
+                title_zh=title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+                header_title=_build_header_title(
+                    entry["source_title"],
+                    title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+                ),
+                toc_label_html=_build_toc_label_html(
+                    entry["source_title"],
+                    title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+                ),
                 blocks=printable_blocks,
             )
         )
@@ -317,6 +336,12 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
         firstLineIndent=20,
         spaceAfter=6,
     )
+    body_mixed_style = ParagraphStyle(
+        "BodyZhMixed",
+        parent=body_style,
+        alignment=TA_LEFT,
+        wordWrap="CJK",
+    )
     reference_style = ParagraphStyle(
         "ReferenceZh",
         parent=styles["BodyText"],
@@ -397,8 +422,8 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
     for index, chapter in enumerate(book.chapters):
         title_style = part_title_style if chapter.title_kind == "part" else chapter_title_style
         source_style = part_source_style if chapter.title_kind == "part" else chapter_source_style
-        top_spacing_mm = 28 if chapter.title_kind == "part" else 18
-        title_spacing_mm = 10 if chapter.title_kind == "part" else 6
+        top_spacing_mm = 18 if chapter.title_kind == "part" else 9
+        title_spacing_mm = 8 if chapter.title_kind == "part" else 4
 
         story.append(Spacer(1, top_spacing_mm * mm))
         heading = Paragraph(chapter.display_title, title_style)
@@ -416,7 +441,10 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
             elif block.kind == "reference":
                 story.append(Paragraph(block.text, reference_style))
             else:
-                story.append(Paragraph(block.text, body_style))
+                paragraph_style = (
+                    body_mixed_style if _has_mixed_script_content(block.text) else body_style
+                )
+                story.append(Paragraph(block.text, paragraph_style))
 
         if index != len(book.chapters) - 1:
             story.append(NextPageTemplate(_opening_template_id(book.chapters[index + 1])))
@@ -605,6 +633,20 @@ def _build_toc_label_html(title_en: str, title_zh: str | None) -> str:
         f"{escaped_title_zh}<br/>"
         f"<font size='8.5' color='#6B6259'>{escaped_title_en}</font>"
     )
+
+
+def _tighten_mixed_text_spacing(text: str) -> str:
+    value = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9@#&])", "", text)
+    value = re.sub(r"(?<=[A-Za-z0-9@#&])\s+(?=[\u4e00-\u9fff])", "", value)
+    value = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[（(])", "", value)
+    value = re.sub(r"(?<=[）)])\s+(?=[\u4e00-\u9fff])", "", value)
+    value = re.sub(r"(?<=[A-Za-z])\s+(?=\d)", " ", value)
+    value = re.sub(r"(?<=\d)\s+(?=[A-Za-z])", " ", value)
+    return value
+
+
+def _has_mixed_script_content(text: str) -> bool:
+    return _contains_chinese(text) and bool(re.search(r"[A-Za-z0-9]", text))
 
 
 def _extract_reference_entries(lines: list[str]) -> list[str]:

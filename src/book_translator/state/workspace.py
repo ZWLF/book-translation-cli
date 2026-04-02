@@ -14,6 +14,7 @@ class Workspace:
         self.translations_path = self.root / "translations.jsonl"
         self.error_log_path = self.root / "error_log.json"
         self.summary_path = self.root / "run_summary.json"
+        self.title_translations_path = self.root / "title_translations.json"
         self.output_path = self.root / "translated.txt"
         self.pdf_output_path = self.root / "translated.pdf"
 
@@ -97,5 +98,20 @@ class Workspace:
     def write_summary(self, summary: dict[str, object]) -> None:
         self.summary_path.write_text(
             json.dumps(summary, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def read_title_translations(self) -> dict[str, str]:
+        if not self.title_translations_path.exists():
+            return {}
+        data = json.loads(self.title_translations_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {}
+        return {str(key): str(value) for key, value in data.items()}
+
+    def write_title_translations(self, translations: dict[str, str]) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.title_translations_path.write_text(
+            json.dumps(translations, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )

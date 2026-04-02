@@ -41,7 +41,10 @@ class RunConfig(BaseModel):
         return self.api_key_env or DEFAULT_KEY_ENV[self.provider]
 
     def resolved_api_key(self) -> str:
-        api_key = os.getenv(self.resolved_api_key_env())
+        api_key = os.getenv(self.resolved_api_key_env()) or _read_dotenv_value(
+            Path.cwd() / ".env",
+            self.resolved_api_key_env(),
+        )
         if not api_key:
             raise ValueError(
                 f"Missing API key in environment variable {self.resolved_api_key_env()}."
@@ -60,3 +63,17 @@ class RunConfig(BaseModel):
         }
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()
+
+
+def _read_dotenv_value(path: Path, key: str) -> str | None:
+    if not path.exists():
+        return None
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        if name.strip() != key:
+            continue
+        return value.strip().strip("\"'")
+    return None
