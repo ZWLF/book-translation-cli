@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from book_translator.models import Chunk, Manifest, TranslationResult
-from book_translator.output.polished_pdf import build_printable_book, render_polished_pdf
+from book_translator.output.polished_pdf import (
+    build_printable_book,
+    render_polished_pdf,
+    running_header_texts,
+)
 
 
 def _chunk(
@@ -107,6 +111,77 @@ def test_build_printable_book_normalizes_wrapped_lines_and_headings() -> None:
     assert chapter.blocks[0].text == "这是第一行继续一段。"
     assert chapter.blocks[1].text == "小节标题"
     assert chapter.blocks[2].text == "这里有正文。"
+
+
+def test_build_printable_book_converts_reference_entries_and_strips_markdown() -> None:
+    chunks = [
+        _chunk(
+            chunk_id="chapter-1-0",
+            chapter_id="chapter-1",
+            chapter_index=0,
+            chunk_index=0,
+            title="Chapter One",
+        )
+    ]
+    translations = {
+        "chapter-1-0": _translation(
+            "chapter-1-0",
+            "\n".join(
+                [
+                    "以下是该文本的简体中文翻译：",
+                    "",
+                    "35",
+                    "“第一条参考资料”。",
+                    "36",
+                    "“第二条参考资料”。",
+                    "",
+                    "***",
+                    "",
+                    "**反馈重于感受**",
+                    "",
+                    "这是正文第一行",
+                    "这是正文第二行。",
+                ]
+            ),
+        )
+    }
+
+    book = build_printable_book(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chunks=chunks,
+        translations=translations,
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == [
+        "reference",
+        "reference",
+        "section_heading",
+        "paragraph",
+    ]
+    assert chapter.blocks[0].text == "35 “第一条参考资料”。"
+    assert chapter.blocks[1].text == "36 “第二条参考资料”。"
+    assert chapter.blocks[2].text == "反馈重于感受"
+    assert chapter.blocks[3].text == "这是正文第一行这是正文第二行。"
+
+
+def test_running_header_texts_avoids_left_right_overlap() -> None:
+    left_even, right_even = running_header_texts(
+        page_number=120,
+        book_title="The Book of Elon A Guide to Purpose and Success",
+        chapter_title="第一章：成为多行星物种是一场进化层级的事件",
+    )
+    left_odd, right_odd = running_header_texts(
+        page_number=121,
+        book_title="The Book of Elon A Guide to Purpose and Success",
+        chapter_title="第一章：成为多行星物种是一场进化层级的事件",
+    )
+
+    assert left_even == "The Book of Elon"
+    assert right_even == ""
+    assert left_odd == ""
+    assert right_odd == "第一章：成为多行星物种是一场进化层级的事件"
 
 
 def test_render_polished_pdf_writes_pdf_file(tmp_path: Path) -> None:

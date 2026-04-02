@@ -38,10 +38,10 @@ class PrintableBook:
 
 def build_printable_book(
     *,
-        manifest: Manifest,
-        summary: dict[str, Any],
-        chunks: list[Chunk],
-        translations: dict[str, TranslationResult],
+    manifest: Manifest,
+    summary: dict[str, Any],
+    chunks: list[Chunk],
+    translations: dict[str, TranslationResult],
 ) -> PrintableBook:
     title_en, author = _parse_title_and_author(_source_stem(manifest.source_path))
     grouped: dict[str, dict[str, Any]] = {}
@@ -73,6 +73,13 @@ def build_printable_book(
         printable_blocks: list[PrintableBlock] = []
 
         for lines in raw_blocks:
+            reference_entries = _extract_reference_entries(lines)
+            if reference_entries:
+                printable_blocks.extend(
+                    PrintableBlock(kind="reference", text=entry) for entry in reference_entries
+                )
+                continue
+
             cleaned_lines = _clean_block_lines(lines)
             if not cleaned_lines:
                 continue
@@ -278,6 +285,19 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
         firstLineIndent=21,
         spaceAfter=10,
     )
+    reference_style = ParagraphStyle(
+        "ReferenceZh",
+        parent=styles["BodyText"],
+        fontName=fonts["body"],
+        fontSize=9,
+        leading=13,
+        textColor=palette["ink"],
+        alignment=TA_LEFT,
+        firstLineIndent=0,
+        leftIndent=0,
+        spaceAfter=4,
+        splitLongWords=False,
+    )
     toc_level_style = ParagraphStyle(
         "TOCLevel0",
         parent=styles["BodyText"],
@@ -337,6 +357,8 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
         for block in chapter.blocks:
             if block.kind == "section_heading":
                 story.append(Paragraph(block.text, section_heading_style))
+            elif block.kind == "reference":
+                story.append(Paragraph(block.text, reference_style))
             else:
                 story.append(Paragraph(block.text, body_style))
 
@@ -398,12 +420,19 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
             )
             canvas.setFont(fonts["sans"], 8.5)
             canvas.setFillColor(palette["muted"])
-            canvas.drawString(self.leftMargin, page_height - 9 * mm, cover_title_en)
-            canvas.drawRightString(
-                page_width - self.rightMargin,
-                page_height - 9 * mm,
-                _truncate_for_header(self.current_chapter_title),
+            left_header, right_header = running_header_texts(
+                page_number=canvas.getPageNumber(),
+                book_title=cover_title_en,
+                chapter_title=self.current_chapter_title,
             )
+            if left_header:
+                canvas.drawString(self.leftMargin, page_height - 9 * mm, left_header)
+            if right_header:
+                canvas.drawRightString(
+                    page_width - self.rightMargin,
+                    page_height - 9 * mm,
+                    right_header,
+                )
             canvas.setFont(fonts["sans"], 8.5)
             canvas.drawCentredString(page_width / 2, 8 * mm, str(canvas.getPageNumber()))
             canvas.restoreState()
@@ -424,13 +453,53 @@ def _split_raw_blocks(text: str) -> list[list[str]]:
 def _clean_block_lines(lines: list[str]) -> list[str]:
     cleaned: list[str] = []
     for line in lines:
-        value = re.sub(r"^#{1,6}\s*", "", line).strip()
+        value = _normalize_line(line)
         if not value:
-            continue
-        if re.fullmatch(r"\d+", value):
             continue
         cleaned.append(value)
     return cleaned
+
+
+def _extract_reference_entries(lines: list[str]) -> list[str]:
+    entries: list[str] = []
+    current_number: str | None = None
+    current_parts: list[str] = []
+
+    for line in lines:
+        value = _normalize_line(line, keep_number_line=True)
+        if not value:
+            continue
+        if re.fullmatch(r"\d+", value):
+            if current_number and current_parts:
+                entries.append(f"{current_number} {' '.join(current_parts)}".strip())
+            current_number = value
+            current_parts = []
+            continue
+        if current_number is None:
+            return []
+        current_parts.append(value)
+
+    if current_number and current_parts:
+        entries.append(f"{current_number} {' '.join(current_parts)}".strip())
+
+    if len(entries) < 2:
+        return []
+    return entries
+
+
+def _normalize_line(line: str, *, keep_number_line: bool = False) -> str:
+    value = re.sub(r"^#{1,6}\s*", "", line).strip()
+    if _is_translation_preface(value):
+        return ""
+    if _is_horizontal_rule(value):
+        return ""
+    value = value.replace("**", "").replace("__", "")
+    value = re.sub(r"^\*(.+)\*$", r"\1", value)
+    if not value:
+        return ""
+    if not keep_number_line and re.fullmatch(r"\d+", value):
+        return ""
+    return value
 
 
 def _looks_like_chapter_heading(text: str) -> bool:
@@ -472,6 +541,33 @@ def _truncate_for_header(text: str, max_length: int = 22) -> str:
     if len(text) <= max_length:
         return text
     return text[: max_length - 1] + "…"
+
+
+def running_header_texts(
+    *,
+    page_number: int,
+    book_title: str,
+    chapter_title: str,
+) -> tuple[str, str]:
+    short_book_title = _short_book_title(book_title)
+    if page_number % 2 == 0:
+        return _truncate_for_header(short_book_title, max_length=18), ""
+    return "", _truncate_for_header(chapter_title, max_length=22)
+
+
+def _short_book_title(text: str) -> str:
+    for separator in (" A Guide to ", ": ", " - ", " — ", " | "):
+        if separator in text:
+            return text.split(separator, maxsplit=1)[0].strip()
+    return text
+
+
+def _is_translation_preface(text: str) -> bool:
+    return text.startswith("以下是") and "简体中文翻译" in text
+
+
+def _is_horizontal_rule(text: str) -> bool:
+    return bool(re.fullmatch(r"[-*_]{3,}", text))
 
 
 def _as_float(value: Any) -> float | None:
