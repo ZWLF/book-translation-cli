@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from book_translator.models import Chunk, Manifest, TranslationResult
 
@@ -19,8 +20,16 @@ class PrintableChapter:
     chapter_id: str
     chapter_index: int
     source_title: str
-    display_title: str
+    title_kind: str
+    title_en: str
+    title_zh: str | None
+    header_title: str
+    toc_label_html: str
     blocks: list[PrintableBlock] = field(default_factory=list)
+
+    @property
+    def display_title(self) -> str:
+        return self.title_zh or self.title_en or self.source_title
 
 
 @dataclass(slots=True)
@@ -69,12 +78,14 @@ def build_printable_book(
             continue
 
         raw_blocks = _split_raw_blocks(combined_text)
-        display_title = entry["source_title"]
+        chapter_title_zh: str | None = None
+        title_block_checked = False
         printable_blocks: list[PrintableBlock] = []
 
         for lines in raw_blocks:
             reference_entries = _extract_reference_entries(lines)
             if reference_entries:
+                title_block_checked = True
                 printable_blocks.extend(
                     PrintableBlock(kind="reference", text=entry) for entry in reference_entries
                 )
@@ -90,12 +101,9 @@ def build_printable_book(
                 if not cleaned_lines:
                     continue
 
-            if (
-                _looks_like_chapter_heading(cleaned_lines[0])
-                and display_title == entry["source_title"]
-            ):
-                display_title = cleaned_lines[0]
-                cleaned_lines = cleaned_lines[1:]
+            if not title_block_checked:
+                chapter_title_zh, cleaned_lines = _extract_chapter_title_zh(cleaned_lines)
+                title_block_checked = True
                 if not cleaned_lines:
                     continue
 
@@ -115,7 +123,11 @@ def build_printable_book(
                 chapter_id=entry["chapter_id"],
                 chapter_index=entry["chapter_index"],
                 source_title=entry["source_title"],
-                display_title=display_title,
+                title_kind=_classify_title_kind(entry["source_title"], chapter_title_zh),
+                title_en=entry["source_title"],
+                title_zh=chapter_title_zh,
+                header_title=_build_header_title(entry["source_title"], chapter_title_zh),
+                toc_label_html=_build_toc_label_html(entry["source_title"], chapter_title_zh),
                 blocks=printable_blocks,
             )
         )
@@ -164,9 +176,9 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
     styles = getSampleStyleSheet()
     page_width, page_height = A5
     margins = {
-        "left": 18 * mm,
-        "right": 18 * mm,
-        "top": 18 * mm,
+        "left": 20 * mm,
+        "right": 20 * mm,
+        "top": 20 * mm,
         "bottom": 18 * mm,
     }
 
@@ -243,70 +255,104 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
         textColor=palette["ink"],
         spaceAfter=16,
     )
-    chapter_title_style = ParagraphStyle(
-        "ChapterTitleZh",
+    part_title_style = ParagraphStyle(
+        "PartTitleZh",
         parent=styles["Heading1"],
         fontName=fonts["title"],
-        fontSize=18,
-        leading=26,
+        fontSize=19.5,
+        leading=28,
         alignment=TA_CENTER,
         textColor=palette["ink"],
-        spaceAfter=8,
+        spaceAfter=6,
     )
-    chapter_source_style = ParagraphStyle(
-        "ChapterTitleEn",
+    part_source_style = ParagraphStyle(
+        "PartTitleEn",
         parent=styles["BodyText"],
         fontName=fonts["sans"],
         fontSize=9.5,
         leading=14,
         alignment=TA_CENTER,
         textColor=palette["muted"],
-        spaceAfter=12,
+        spaceAfter=18,
+    )
+    chapter_title_style = ParagraphStyle(
+        "ChapterTitleZh",
+        parent=styles["Heading1"],
+        fontName=fonts["title"],
+        fontSize=17.2,
+        leading=24,
+        alignment=TA_CENTER,
+        textColor=palette["ink"],
+        spaceAfter=5,
+    )
+    chapter_source_style = ParagraphStyle(
+        "ChapterTitleEn",
+        parent=styles["BodyText"],
+        fontName=fonts["sans"],
+        fontSize=9.2,
+        leading=13,
+        alignment=TA_CENTER,
+        textColor=palette["muted"],
+        spaceAfter=14,
     )
     section_heading_style = ParagraphStyle(
         "SectionHeading",
         parent=styles["Heading3"],
         fontName=fonts["title"],
-        fontSize=12.5,
-        leading=18,
+        fontSize=11.8,
+        leading=16,
         textColor=palette["accent"],
         alignment=TA_LEFT,
-        spaceBefore=6,
-        spaceAfter=6,
+        spaceBefore=10,
+        spaceAfter=5,
     )
     body_style = ParagraphStyle(
         "BodyZh",
         parent=styles["BodyText"],
         fontName=fonts["body"],
-        fontSize=10.5,
-        leading=18,
+        fontSize=10.2,
+        leading=18.6,
         textColor=palette["ink"],
         alignment=TA_JUSTIFY,
-        firstLineIndent=21,
-        spaceAfter=10,
+        firstLineIndent=20,
+        spaceAfter=6,
     )
     reference_style = ParagraphStyle(
         "ReferenceZh",
         parent=styles["BodyText"],
         fontName=fonts["body"],
-        fontSize=9,
-        leading=13,
-        textColor=palette["ink"],
+        fontSize=8.6,
+        leading=12.4,
+        textColor=palette["muted"],
         alignment=TA_LEFT,
         firstLineIndent=0,
-        leftIndent=0,
-        spaceAfter=4,
+        leftIndent=6,
+        spaceAfter=3,
         splitLongWords=False,
     )
-    toc_level_style = ParagraphStyle(
-        "TOCLevel0",
+    toc_part_style = ParagraphStyle(
+        "TOCPart",
         parent=styles["BodyText"],
         fontName=fonts["body"],
-        fontSize=10.5,
-        leading=16,
+        fontSize=11,
+        leading=18,
         textColor=palette["ink"],
         leftIndent=0,
         firstLineIndent=0,
+        spaceBefore=6,
+        spaceAfter=7,
+    )
+    toc_chapter_style = ParagraphStyle(
+        "TOCChapter",
+        parent=styles["BodyText"],
+        fontName=fonts["body"],
+        fontSize=10.2,
+        leading=15,
+        textColor=palette["ink"],
+        leftIndent=12,
+        firstLineIndent=0,
+        spaceBefore=2,
+        spaceAfter=3,
     )
 
     story.append(Spacer(1, 42 * mm))
@@ -342,18 +388,27 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
     story.append(NextPageTemplate("toc"))
     story.append(Paragraph("目录", toc_heading_style))
     toc = TableOfContents()
-    toc.levelStyles = [toc_level_style]
+    toc.levelStyles = [toc_part_style, toc_chapter_style]
     story.append(toc)
-    story.append(PageBreak())
-    story.append(NextPageTemplate("body"))
+    if book.chapters:
+        story.append(NextPageTemplate(_opening_template_id(book.chapters[0])))
+        story.append(PageBreak())
 
     for index, chapter in enumerate(book.chapters):
-        story.append(Paragraph(chapter.source_title, chapter_source_style))
-        heading = Paragraph(chapter.display_title, chapter_title_style)
-        heading._toc_level = 0
-        heading._chapter_title = chapter.display_title
+        title_style = part_title_style if chapter.title_kind == "part" else chapter_title_style
+        source_style = part_source_style if chapter.title_kind == "part" else chapter_source_style
+        top_spacing_mm = 28 if chapter.title_kind == "part" else 18
+        title_spacing_mm = 10 if chapter.title_kind == "part" else 6
+
+        story.append(Spacer(1, top_spacing_mm * mm))
+        heading = Paragraph(chapter.display_title, title_style)
+        heading._toc_level = 0 if chapter.title_kind == "part" else 1
+        heading._chapter_title = chapter.header_title
+        heading._toc_label_html = chapter.toc_label_html
         story.append(heading)
-        story.append(Spacer(1, 4 * mm))
+        if chapter.title_zh and chapter.title_en:
+            story.append(Paragraph(chapter.title_en, source_style))
+        story.append(Spacer(1, title_spacing_mm * mm))
 
         for block in chapter.blocks:
             if block.kind == "section_heading":
@@ -364,6 +419,7 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
                 story.append(Paragraph(block.text, body_style))
 
         if index != len(book.chapters) - 1:
+            story.append(NextPageTemplate(_opening_template_id(book.chapters[index + 1])))
             story.append(PageBreak())
 
     class BookDocTemplate(BaseDocTemplate):
@@ -390,6 +446,18 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
                 [
                     PageTemplate(id="front", frames=[frame], onPage=self._draw_front),
                     PageTemplate(id="toc", frames=[frame], onPage=self._draw_toc),
+                    PageTemplate(
+                        id="part-opening",
+                        frames=[frame],
+                        onPage=self._draw_opening,
+                        autoNextPageTemplate="body",
+                    ),
+                    PageTemplate(
+                        id="chapter-opening",
+                        frames=[frame],
+                        onPage=self._draw_opening,
+                        autoNextPageTemplate="body",
+                    ),
                     PageTemplate(id="body", frames=[frame], onPage=self._draw_body),
                 ]
             )
@@ -398,7 +466,8 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
             if hasattr(flowable, "_chapter_title"):
                 self.current_chapter_title = flowable._chapter_title
             if hasattr(flowable, "_toc_level"):
-                self.notify("TOCEntry", (flowable._toc_level, flowable.getPlainText(), self.page))
+                toc_label = getattr(flowable, "_toc_label_html", flowable.getPlainText())
+                self.notify("TOCEntry", (flowable._toc_level, toc_label, self.page))
 
         def _draw_front(self, canvas: Any, doc: Any) -> None:
             canvas.saveState()
@@ -412,6 +481,19 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
             canvas.restoreState()
 
         def _draw_toc(self, canvas: Any, doc: Any) -> None:
+            canvas.saveState()
+            canvas.setStrokeColor(palette["line"])
+            canvas.line(
+                self.leftMargin,
+                page_height - 12 * mm,
+                page_width - self.rightMargin,
+                page_height - 12 * mm,
+            )
+            canvas.setFont(fonts["sans"], 8.5)
+            canvas.drawCentredString(page_width / 2, 8 * mm, str(canvas.getPageNumber()))
+            canvas.restoreState()
+
+        def _draw_opening(self, canvas: Any, doc: Any) -> None:
             canvas.saveState()
             canvas.setStrokeColor(palette["line"])
             canvas.line(
@@ -456,6 +538,12 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
     doc.multiBuild(story)
 
 
+def _opening_template_id(chapter: PrintableChapter) -> str:
+    if chapter.title_kind == "part":
+        return "part-opening"
+    return "chapter-opening"
+
+
 def _split_raw_blocks(text: str) -> list[list[str]]:
     blocks: list[list[str]] = []
     for raw_block in re.split(r"\n\s*\n+", text.replace("\r\n", "\n")):
@@ -473,6 +561,50 @@ def _clean_block_lines(lines: list[str]) -> list[str]:
             continue
         cleaned.append(value)
     return cleaned
+
+
+def _extract_chapter_title_zh(lines: list[str]) -> tuple[str | None, list[str]]:
+    if not lines:
+        return None, lines
+
+    first_line = lines[0]
+    if _looks_like_chapter_heading(first_line) and _contains_chinese(first_line):
+        remainder = lines[1:]
+        if remainder and first_line.rstrip().endswith(("：", ":")):
+            second_line = remainder[0]
+            if _looks_like_translated_title_candidate(second_line):
+                return f"{first_line}{second_line}", remainder[1:]
+        return first_line, remainder
+
+    if _looks_like_translated_title_candidate(first_line):
+        return first_line, lines[1:]
+
+    return None, lines
+
+
+def _classify_title_kind(title_en: str, title_zh: str | None) -> str:
+    if not title_en and not title_zh:
+        return "fallback"
+    if title_en.lower().startswith("part "):
+        return "part"
+    if title_zh and title_zh.startswith("第") and "部分" in title_zh:
+        return "part"
+    return "chapter"
+
+
+def _build_header_title(title_en: str, title_zh: str | None) -> str:
+    return title_zh or title_en or "未命名章节"
+
+
+def _build_toc_label_html(title_en: str, title_zh: str | None) -> str:
+    escaped_title_en = xml_escape(title_en)
+    if not title_zh:
+        return escaped_title_en
+    escaped_title_zh = xml_escape(title_zh)
+    return (
+        f"{escaped_title_zh}<br/>"
+        f"<font size='8.5' color='#6B6259'>{escaped_title_en}</font>"
+    )
 
 
 def _extract_reference_entries(lines: list[str]) -> list[str]:
@@ -506,6 +638,8 @@ def _normalize_line(line: str, *, keep_number_line: bool = False) -> str:
     value = re.sub(r"^#{1,6}\s*", "", line).strip()
     if _is_translation_preface(value):
         return ""
+    if _is_prompt_wrapper(value):
+        return ""
     if _is_horizontal_rule(value):
         return ""
     value = value.replace("**", "").replace("__", "")
@@ -537,6 +671,28 @@ def _looks_like_section_heading(text: str) -> bool:
 
 def _is_book_title(text: str) -> bool:
     return text.startswith("《") and text.endswith("》")
+
+
+def _contains_chinese(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text))
+
+
+def _looks_like_translated_title_candidate(text: str) -> bool:
+    candidate = text.strip()
+    if not candidate or not _contains_chinese(candidate):
+        return False
+    if len(candidate) > 34:
+        return False
+    if re.search(r"[。！？；!?]$", candidate):
+        return False
+
+    visible_chars = [char for char in candidate if not char.isspace()]
+    if not visible_chars:
+        return False
+    chinese_chars = [char for char in visible_chars if re.match(r"[\u4e00-\u9fff]", char)]
+    if len(chinese_chars) < 3:
+        return False
+    return len(chinese_chars) / len(visible_chars) >= 0.45
 
 
 def _parse_title_and_author(stem: str) -> tuple[str, str | None]:
@@ -578,7 +734,23 @@ def _short_book_title(text: str) -> str:
 
 
 def _is_translation_preface(text: str) -> bool:
-    return text.startswith("以下是") and "简体中文翻译" in text
+    if not text.startswith("以下是"):
+        return False
+    if "简体中文" not in text:
+        return False
+    return "翻译" in text or "内容" in text
+
+
+def _is_prompt_wrapper(text: str) -> bool:
+    if text.startswith(
+        ("本书：", "这本书：", "书名：", "章节：", "分块索引：", "原文片段索引：", "翻译如下")
+    ):
+        return True
+    if all(marker in text for marker in ("本书：", "章节：", "分块索引：")):
+        return True
+    if text.startswith(("本书", "这本书", "书名")) and "原文片段索引：" in text:
+        return True
+    return False
 
 
 def _is_horizontal_rule(text: str) -> bool:
