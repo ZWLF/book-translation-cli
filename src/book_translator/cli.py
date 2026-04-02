@@ -10,6 +10,13 @@ from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from book_translator.config import RunConfig
+from book_translator.output.pdf_raster import (
+    choose_sample_pages,
+    parse_page_spec,
+    pdf_page_count,
+    render_pdf_pages,
+    write_qa_summary,
+)
 from book_translator.output.polished_pdf import build_printable_book, render_polished_pdf
 from book_translator.output.title_enrichment import enrich_missing_titles
 from book_translator.pipeline import discover_books, process_book
@@ -156,3 +163,78 @@ def render_pdf_command(
     target_path = output_path or workspace.pdf_output_path
     render_polished_pdf(printable_book, target_path)
     console.print(f"[green]Rendered polished PDF[/green] {target_path}")
+
+
+@app.command("render-pages")
+def render_pages_command(
+    pdf_path: Annotated[
+        Path,
+        typer.Option("--pdf", exists=True, file_okay=True, dir_okay=False),
+    ],
+    output_dir: Annotated[Path, typer.Option("--output-dir")] ,
+    pages: Annotated[str | None, typer.Option("--pages")] = None,
+    dpi: Annotated[int, typer.Option("--dpi", min=72)] = 144,
+) -> None:
+    """Rasterize selected PDF pages into PNG files."""
+    total_pages = pdf_page_count(pdf_path)
+    selected_pages = (
+        parse_page_spec(pages, total_pages=total_pages)
+        if pages
+        else list(range(1, total_pages + 1))
+    )
+    rendered = render_pdf_pages(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        pages=selected_pages,
+        dpi=dpi,
+    )
+    console.print(
+        f"[green]Rendered {len(rendered)} page(s)[/green] from {pdf_path} into {output_dir}"
+    )
+
+
+@app.command("qa-pdf")
+def qa_pdf_command(
+    workspace_path: Annotated[
+        Path,
+        typer.Option("--workspace", exists=True, file_okay=False, dir_okay=True),
+    ],
+    pages: Annotated[str | None, typer.Option("--pages")] = None,
+    all_pages: Annotated[bool, typer.Option("--all-pages")] = False,
+    dpi: Annotated[int, typer.Option("--dpi", min=72)] = 144,
+    output_dir: Annotated[Path | None, typer.Option("--output-dir")] = None,
+) -> None:
+    """Generate PNG screenshots for visual QA from a rendered workspace PDF."""
+    workspace = Workspace(workspace_path)
+    pdf_path = workspace.pdf_output_path
+    if not pdf_path.exists():
+        raise typer.BadParameter(f"Workspace PDF does not exist: {pdf_path}")
+
+    total_pages = pdf_page_count(pdf_path)
+    if pages:
+        selected_pages = parse_page_spec(pages, total_pages=total_pages)
+    elif all_pages:
+        selected_pages = list(range(1, total_pages + 1))
+    else:
+        selected_pages = choose_sample_pages(total_pages)
+
+    target_dir = output_dir or workspace.qa_pages_path
+    rendered = render_pdf_pages(
+        pdf_path=pdf_path,
+        output_dir=target_dir,
+        pages=selected_pages,
+        dpi=dpi,
+    )
+    summary_path = workspace.qa_summary_path
+    write_qa_summary(
+        pdf_path=pdf_path,
+        summary_path=summary_path,
+        output_dir=target_dir,
+        total_pages=total_pages,
+        rendered_pages=rendered,
+        dpi=dpi,
+    )
+    console.print(
+        f"[green]Generated {len(rendered)} QA page(s)[/green] in {target_dir} "
+        f"(summary: {summary_path})"
+    )
