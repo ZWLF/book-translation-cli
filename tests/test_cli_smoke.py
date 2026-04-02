@@ -12,3 +12,5 @@ def test_cli_shows_help() -> None:
     assert "book-translator" in result.stdout
     assert "Translate text-based PDF and EPUB books" in result.stdout
     assert "render-pdf" in result.stdout
+    assert "render-pages" in result.stdout
+    assert "qa-pdf" in result.stdout

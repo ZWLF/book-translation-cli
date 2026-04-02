@@ -17,6 +17,9 @@ class Workspace:
         self.title_translations_path = self.root / "title_translations.json"
         self.output_path = self.root / "translated.txt"
         self.pdf_output_path = self.root / "translated.pdf"
+        self.qa_root_path = self.root / "qa"
+        self.qa_pages_path = self.qa_root_path / "pages"
+        self.qa_summary_path = self.qa_root_path / "qa_summary.json"
 
     def initialize(self, manifest: Manifest) -> None:
         self.root.mkdir(parents=True, exist_ok=True)

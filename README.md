@@ -12,6 +12,7 @@ Command-line tool for engineering-grade translation of text-based PDF and EPUB b
 - Resume unfinished runs
 - Write `translated.txt`, `error_log.json`, and `run_summary.json`
 - Render a polished Chinese reading PDF as `translated.pdf`
+- Rasterize rendered PDF pages into PNG screenshots for visual QA
 
 ## Installation
 
@@ -52,6 +53,18 @@ To re-render a polished PDF from an existing workspace without calling the trans
 book-translator render-pdf --workspace ./out/book-name
 ```
 
+To export specific PDF pages as PNG files:
+
+```bash
+book-translator render-pages --pdf ./out/book-name/translated.pdf --output-dir ./tmp/pages --pages 1,3-5
+```
+
+To generate a workspace-local visual QA snapshot set:
+
+```bash
+book-translator qa-pdf --workspace ./out/book-name
+```
+
 ## Output Per Book
 
 Each processed book writes a dedicated workspace directory under the output root:
@@ -63,6 +76,8 @@ Each processed book writes a dedicated workspace directory under the output root
 - `run_summary.json`
 - `translated.txt`
 - `translated.pdf`
+- `qa/pages/page-###.png`
+- `qa/qa_summary.json`
 
 ## CLI Options
 
