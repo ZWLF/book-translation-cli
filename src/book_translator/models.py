@@ -11,12 +11,14 @@ def utc_now_iso() -> str:
 
 class TocEntry(BaseModel):
     title: str
+    page_index: int | None = None
 
 
 class ExtractedBook(BaseModel):
     title: str
     raw_text: str
     toc: list[TocEntry] = Field(default_factory=list)
+    pages: list[str] = Field(default_factory=list)
 
 
 class Chapter(BaseModel):

@@ -77,3 +77,41 @@ def test_detect_chapters_ignores_toc_page_occurrences() -> None:
     assert [chapter.title for chapter in chapters] == ["Chapter 1", "Chapter 2"]
     assert chapters[0].text == "Actual first body."
     assert chapters[1].text == "Actual second body."
+
+
+def test_detect_chapters_prefers_page_aware_pdf_toc() -> None:
+    extracted = ExtractedBook(
+        title="Page Aware",
+        raw_text=(
+            "Contents\n"
+            "Notes on This Book\n"
+            "Foreword\n"
+            "Chapter 1\n\n"
+            "Notes body.\n\n"
+            "Foreword body.\n\n"
+            "Chapter 1\n"
+            "Actual second body.\n"
+        ),
+        toc=[
+            TocEntry(title="Notes on This Book", page_index=1),
+            TocEntry(title="Foreword", page_index=2),
+            TocEntry(title="Chapter 1", page_index=3),
+        ],
+        pages=[
+            "Contents\nNotes on This Book\nForeword\nChapter 1",
+            "Notes body.",
+            "Foreword body.",
+            "Chapter 1\nActual second body.",
+        ],
+    )
+
+    chapters = detect_chapters(extracted, strategy="toc-first")
+
+    assert [chapter.title for chapter in chapters] == [
+        "Notes on This Book",
+        "Foreword",
+        "Chapter 1",
+    ]
+    assert chapters[0].text == "Notes body."
+    assert chapters[1].text == "Foreword body."
+    assert chapters[2].text == "Actual second body."

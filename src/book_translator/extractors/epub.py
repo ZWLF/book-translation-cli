@@ -51,4 +51,5 @@ def extract_epub(path: Path) -> ExtractedBook:
         title=title,
         raw_text="\n\n".join(text_sections).strip(),
         toc=_flatten_toc(book.toc),
+        pages=text_sections,
     )

@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from ebooklib import epub
+from pypdf import PdfReader, PdfWriter
+from reportlab.pdfgen import canvas
 
 from book_translator.extractors.epub import extract_epub
 from book_translator.extractors.pdf import extract_pdf
@@ -50,6 +52,32 @@ def _write_text_pdf(path: Path, lines: list[str]) -> None:
     path.write_bytes(bytes(pdf))
 
 
+def _write_text_pdf_with_outline(
+    path: Path,
+    pages: list[list[str]],
+    outline: list[tuple[str, int]],
+) -> None:
+    plain_path = path.with_name(f"{path.stem}-plain.pdf")
+    c = canvas.Canvas(str(plain_path))
+    for page_lines in pages:
+        y = 760
+        for line in page_lines:
+            c.drawString(72, y, line)
+            y -= 24
+        c.showPage()
+    c.save()
+
+    reader = PdfReader(str(plain_path))
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    for title, page_index in outline:
+        writer.add_outline_item(title, page_index)
+    with path.open("wb") as handle:
+        writer.write(handle)
+    plain_path.unlink()
+
+
 def test_extract_epub_reads_text_and_toc(tmp_path: Path) -> None:
     book = epub.EpubBook()
     book.set_identifier("id-1")
@@ -83,3 +111,28 @@ def test_extract_pdf_reads_text(tmp_path: Path) -> None:
 
     assert extracted.title == "sample"
     assert "Hello PDF world." in extracted.raw_text
+
+
+def test_extract_pdf_reads_outline_page_numbers(tmp_path: Path) -> None:
+    file_path = tmp_path / "outlined.pdf"
+    _write_text_pdf_with_outline(
+        file_path,
+        pages=[
+            ["Contents", "Chapter 1", "Chapter 2"],
+            ["Chapter 1", "Actual first body."],
+            ["Chapter 2", "Actual second body."],
+        ],
+        outline=[("Chapter 1", 1), ("Chapter 2", 2)],
+    )
+
+    extracted = extract_pdf(file_path)
+
+    assert extracted.pages == [
+        "Contents\nChapter 1\nChapter 2",
+        "Chapter 1\nActual first body.",
+        "Chapter 2\nActual second body.",
+    ]
+    assert [(entry.title, entry.page_index) for entry in extracted.toc] == [
+        ("Chapter 1", 1),
+        ("Chapter 2", 2),
+    ]
