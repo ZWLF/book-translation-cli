@@ -1,7 +1,12 @@
 from pathlib import Path
 
+from pypdf import PdfReader
+
 from book_translator.models import Chunk, Manifest, TranslationResult
 from book_translator.output.polished_pdf import (
+    PrintableBlock,
+    PrintableBook,
+    PrintableChapter,
     build_printable_book,
     render_polished_pdf,
     running_header_texts,
@@ -221,3 +226,36 @@ def test_render_polished_pdf_writes_pdf_file(tmp_path: Path) -> None:
     assert output_path.exists()
     assert output_path.read_bytes().startswith(b"%PDF")
     assert output_path.stat().st_size > 0
+
+
+def test_render_polished_pdf_hides_running_headers_on_toc_pages(tmp_path: Path) -> None:
+    chapters = [
+        PrintableChapter(
+            chapter_id=f"chapter-{index}",
+            chapter_index=index,
+            source_title=f"Chapter {index}",
+            display_title=f"Chapter {index}",
+            blocks=[PrintableBlock(kind="paragraph", text="Body text for testing.")],
+        )
+        for index in range(1, 80)
+    ]
+    book = PrintableBook(
+        book_id="sample-book",
+        title_en="Sample Book",
+        title_zh="示例图书",
+        author="Author Name",
+        source_path=r"H:\books\Sample Book (Author Name).pdf",
+        provider="gemini",
+        model="gemini-3.1-flash-lite-preview",
+        estimated_cost_usd=0.0,
+        chapters=chapters,
+    )
+
+    output_path = tmp_path / "toc.pdf"
+    render_polished_pdf(book, output_path)
+
+    reader = PdfReader(str(output_path))
+    toc_page_text = " ".join((reader.pages[3].extract_text() or "").split())
+
+    assert "Chapter 13" in toc_page_text
+    assert not toc_page_text.startswith("Sample Book 4")

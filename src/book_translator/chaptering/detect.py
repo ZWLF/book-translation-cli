@@ -21,6 +21,9 @@ def detect_chapters(
         return _split_by_titles(extracted.raw_text, manual_titles)
 
     if normalized_strategy in {"toc-first", "auto"} and extracted.toc:
+        chapters = _split_by_toc_pages(extracted)
+        if chapters:
+            return chapters
         toc_titles = [entry.title for entry in extracted.toc]
         chapters = _split_by_titles(extracted.raw_text, toc_titles)
         if chapters:
@@ -70,6 +73,46 @@ def _split_by_titles(raw_text: str, titles: list[str]) -> list[Chapter]:
     return chapters
 
 
+def _split_by_toc_pages(extracted: ExtractedBook) -> list[Chapter]:
+    if not extracted.pages:
+        return []
+
+    page_entries = [
+        entry
+        for entry in extracted.toc
+        if entry.page_index is not None and 0 <= entry.page_index < len(extracted.pages)
+    ]
+    if not page_entries:
+        return []
+
+    chapters: list[Chapter] = []
+    for index, entry in enumerate(page_entries):
+        start_page = entry.page_index
+        next_page = (
+            page_entries[index + 1].page_index
+            if index + 1 < len(page_entries)
+            else len(extracted.pages)
+        )
+        if next_page is None or next_page <= start_page:
+            next_page = start_page + 1
+        chapter_pages = [
+            page.strip()
+            for page in extracted.pages[start_page:next_page]
+            if page.strip()
+        ]
+        body = "\n\n".join(chapter_pages).strip()
+        body = _strip_leading_title(body, entry.title)
+        chapters.append(
+            Chapter(
+                chapter_id=f"{slugify(entry.title)}-{index}",
+                chapter_index=index,
+                title=entry.title,
+                text=body,
+            )
+        )
+    return chapters
+
+
 def _find_title_occurrences(raw_text: str, titles: list[str]) -> list[tuple[str, int, int]]:
     occurrence_sets: list[list[tuple[int, int]]] = []
     for title in titles:
@@ -93,6 +136,16 @@ def _find_title_occurrences(raw_text: str, titles: list[str]) -> list[tuple[str,
         upper_bound = start
     selected.reverse()
     return selected
+
+
+def _strip_leading_title(body: str, title: str) -> str:
+    if not body:
+        return body
+    pattern = re.compile(rf"(?im)^\s*{re.escape(title)}\s*$")
+    match = pattern.match(body)
+    if match:
+        return body[match.end() :].strip()
+    return body
 
 
 def _split_by_headings(raw_text: str) -> list[Chapter]:

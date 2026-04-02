@@ -339,12 +339,13 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
         )
     story.append(PageBreak())
 
-    story.append(NextPageTemplate("body"))
+    story.append(NextPageTemplate("toc"))
     story.append(Paragraph("目录", toc_heading_style))
     toc = TableOfContents()
     toc.levelStyles = [toc_level_style]
     story.append(toc)
     story.append(PageBreak())
+    story.append(NextPageTemplate("body"))
 
     for index, chapter in enumerate(book.chapters):
         story.append(Paragraph(chapter.source_title, chapter_source_style))
@@ -388,6 +389,7 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
             self.addPageTemplates(
                 [
                     PageTemplate(id="front", frames=[frame], onPage=self._draw_front),
+                    PageTemplate(id="toc", frames=[frame], onPage=self._draw_toc),
                     PageTemplate(id="body", frames=[frame], onPage=self._draw_body),
                 ]
             )
@@ -407,6 +409,19 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
                 page_width - self.rightMargin,
                 page_height - 12 * mm,
             )
+            canvas.restoreState()
+
+        def _draw_toc(self, canvas: Any, doc: Any) -> None:
+            canvas.saveState()
+            canvas.setStrokeColor(palette["line"])
+            canvas.line(
+                self.leftMargin,
+                page_height - 12 * mm,
+                page_width - self.rightMargin,
+                page_height - 12 * mm,
+            )
+            canvas.setFont(fonts["sans"], 8.5)
+            canvas.drawCentredString(page_width / 2, 8 * mm, str(canvas.getPageNumber()))
             canvas.restoreState()
 
         def _draw_body(self, canvas: Any, doc: Any) -> None:
