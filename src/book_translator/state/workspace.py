@@ -15,6 +15,7 @@ class Workspace:
         self.error_log_path = self.root / "error_log.json"
         self.summary_path = self.root / "run_summary.json"
         self.output_path = self.root / "translated.txt"
+        self.pdf_output_path = self.root / "translated.pdf"
 
     def initialize(self, manifest: Manifest) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -71,6 +72,21 @@ class Workspace:
             record = TranslationResult.model_validate(json.loads(line))
             results[record.chunk_id] = record
         return results
+
+    def load_chunks(self) -> list[Chunk]:
+        if not self.chunks_path.exists():
+            return []
+        chunks: list[Chunk] = []
+        for line in self.chunks_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            chunks.append(Chunk.model_validate(json.loads(line)))
+        return chunks
+
+    def read_summary(self) -> dict[str, object]:
+        if not self.summary_path.exists():
+            return {}
+        return json.loads(self.summary_path.read_text(encoding="utf-8"))
 
     def write_errors(self, errors: list[dict[str, object]]) -> None:
         self.error_log_path.write_text(

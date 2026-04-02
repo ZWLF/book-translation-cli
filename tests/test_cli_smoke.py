@@ -11,3 +11,4 @@ def test_cli_shows_help() -> None:
     assert result.exit_code == 0
     assert "book-translator" in result.stdout
     assert "Translate text-based PDF and EPUB books" in result.stdout
+    assert "render-pdf" in result.stdout

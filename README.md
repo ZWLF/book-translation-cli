@@ -11,6 +11,7 @@ Command-line tool for engineering-grade translation of text-based PDF and EPUB b
 - Async concurrency with exponential backoff retries
 - Resume unfinished runs
 - Write `translated.txt`, `error_log.json`, and `run_summary.json`
+- Render a polished Chinese reading PDF as `translated.pdf`
 
 ## Installation
 
@@ -45,6 +46,12 @@ Copy `.env.example` and set the relevant API key:
 book-translator --input ./books --output ./out --provider gemini --resume
 ```
 
+To re-render a polished PDF from an existing workspace without calling the translation API again:
+
+```bash
+book-translator render-pdf --workspace ./out/book-name
+```
+
 ## Output Per Book
 
 Each processed book writes a dedicated workspace directory under the output root:
@@ -55,6 +62,7 @@ Each processed book writes a dedicated workspace directory under the output root
 - `error_log.json`
 - `run_summary.json`
 - `translated.txt`
+- `translated.pdf`
 
 ## CLI Options
 
@@ -71,6 +79,7 @@ Each processed book writes a dedicated workspace directory under the output root
 - `--chapter-strategy`: `toc-first`, `auto`, `rule-only`, or `manual`
 - `--manual-toc`: JSON list of manual chapter titles when `--chapter-strategy manual`
 - `--chunk-size`: approximate max source words per chunk
+- `--render-pdf/--no-render-pdf`: enable or disable polished PDF rendering after translation
 
 ## Validation
 
@@ -82,5 +91,6 @@ pytest -q
 ## Notes
 
 - Version 1 supports text-based PDFs only, not scanned PDFs.
-- Output is Chinese-only plain text.
+- Output is Chinese-only plain text plus an optional polished PDF.
 - Resume is on by default; use `--force` to rerun a book from scratch.
+- The polished PDF renderer uses local Windows Chinese fonts and produces a book-like layout, not a page-faithful clone of the source PDF.

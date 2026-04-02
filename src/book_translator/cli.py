@@ -9,7 +9,9 @@ from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from book_translator.config import RunConfig
+from book_translator.output.polished_pdf import build_printable_book, render_polished_pdf
 from book_translator.pipeline import discover_books, process_book
+from book_translator.state.workspace import Workspace
 
 app = typer.Typer(
     name="book-translator",
@@ -48,8 +50,11 @@ def run(
         typer.Option("--manual-toc", exists=True, file_okay=True, dir_okay=False),
     ] = None,
     chunk_size: Annotated[int, typer.Option("--chunk-size", min=100)] = 3000,
+    render_pdf: Annotated[bool, typer.Option("--render-pdf/--no-render-pdf")] = True,
 ) -> None:
     """Translate text-based PDF and EPUB books into Simplified Chinese."""
+    if ctx.invoked_subcommand is not None:
+        return
     if input_path is None:
         if ctx.resilient_parsing:
             return
@@ -68,6 +73,7 @@ def run(
         chapter_strategy=chapter_strategy,
         manual_toc_path=manual_toc,
         chunk_size=chunk_size,
+        render_pdf=render_pdf,
     )
     asyncio.run(_run_cli(input_path=input_path, output_path=output_path, config=config))
 
@@ -99,3 +105,28 @@ async def _run_cli(*, input_path: Path, output_path: Path, config: RunConfig) ->
 
 def main() -> None:
     app()
+
+
+@app.command("render-pdf")
+def render_pdf_command(
+    workspace_path: Annotated[
+        Path,
+        typer.Option("--workspace", exists=True, file_okay=False, dir_okay=True),
+    ],
+    output_path: Annotated[Path | None, typer.Option("--output")] = None,
+) -> None:
+    """Render a polished PDF from an existing translation workspace."""
+    workspace = Workspace(workspace_path)
+    manifest = workspace.read_manifest()
+    chunks = workspace.load_chunks()
+    translations = workspace.load_translations()
+    summary = workspace.read_summary()
+    printable_book = build_printable_book(
+        manifest=manifest,
+        summary=summary,
+        chunks=chunks,
+        translations=translations,
+    )
+    target_path = output_path or workspace.pdf_output_path
+    render_polished_pdf(printable_book, target_path)
+    console.print(f"[green]Rendered polished PDF[/green] {target_path}")
