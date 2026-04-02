@@ -431,6 +431,37 @@ def test_build_printable_book_strips_translation_marker_titles() -> None:
     assert chapter.blocks[0].text == "我不知道生命的意义是什么。但我认为我们应该继续探索。"
 
 
+def test_build_printable_book_applies_title_overrides_and_tightens_mixed_spacing() -> None:
+    chunks = [
+        _chunk(
+            chunk_id="chapter-1-0",
+            chapter_id="chapter-1",
+            chapter_index=0,
+            chunk_index=0,
+            title="Obsess for Success",
+        )
+    ]
+    translations = {
+        "chapter-1-0": _translation(
+            "chapter-1-0",
+            "我将大部分 Zip2 的收益投入到了 X.com，投资了 1250 万美元。",
+        )
+    }
+
+    book = build_printable_book(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chunks=chunks,
+        translations=translations,
+        title_overrides={"chapter-1": "痴迷于成功"},
+    )
+
+    chapter = book.chapters[0]
+    assert chapter.title_zh == "痴迷于成功"
+    assert chapter.header_title == "痴迷于成功"
+    assert chapter.blocks[0].text == "我将大部分Zip2的收益投入到了X.com，投资了1250万美元。"
+
+
 def test_running_header_texts_avoids_left_right_overlap() -> None:
     left_even, right_even = running_header_texts(
         page_number=120,

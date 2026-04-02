@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Annotated
 
@@ -10,6 +11,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 
 from book_translator.config import RunConfig
 from book_translator.output.polished_pdf import build_printable_book, render_polished_pdf
+from book_translator.output.title_enrichment import enrich_missing_titles
 from book_translator.pipeline import discover_books, process_book
 from book_translator.state.workspace import Workspace
 
@@ -20,6 +22,16 @@ app = typer.Typer(
 )
 console = Console()
 DEFAULT_OUTPUT_PATH = Path("out")
+
+
+def _run_async_sync(awaitable):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(lambda: asyncio.run(awaitable)).result()
 
 
 @app.callback(invoke_without_command=True)
@@ -126,6 +138,20 @@ def render_pdf_command(
         summary=summary,
         chunks=chunks,
         translations=translations,
+    )
+    api_key: str | None = None
+    try:
+        api_key = RunConfig(provider=manifest.provider, model=manifest.model).resolved_api_key()
+    except ValueError:
+        api_key = None
+    printable_book = _run_async_sync(
+        enrich_missing_titles(
+            book=printable_book,
+            workspace=workspace,
+            provider_name=manifest.provider,
+            model=manifest.model,
+            api_key=api_key,
+        )
     )
     target_path = output_path or workspace.pdf_output_path
     render_polished_pdf(printable_book, target_path)
