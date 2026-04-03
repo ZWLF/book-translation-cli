@@ -45,7 +45,7 @@ def _run_async_sync(awaitable):
         return executor.submit(lambda: asyncio.run(awaitable)).result()
 
 
-def _run_engineering_mode(
+def _engineering_command(
     ctx: typer.Context,
     input_path: Annotated[
         Path | None,
@@ -73,7 +73,7 @@ def _run_engineering_mode(
     ] = None,
     chunk_size: Annotated[int, typer.Option("--chunk-size", min=100)] = 3000,
     render_pdf: Annotated[bool, typer.Option("--render-pdf/--no-render-pdf")] = True,
-) -> None:
+    ) -> None:
     if ctx.invoked_subcommand is not None:
         return
     if input_path is None:
@@ -99,104 +99,9 @@ def _run_engineering_mode(
     asyncio.run(_run_cli(input_path=input_path, output_path=output_path, config=config))
 
 
-@app.callback(invoke_without_command=True)
-def run(
-    ctx: typer.Context,
-    input_path: Annotated[
-        Path | None,
-        typer.Option("--input", exists=True, file_okay=True, dir_okay=True),
-    ] = None,
-    output_path: Annotated[Path, typer.Option("--output")] = DEFAULT_OUTPUT_PATH,
-    provider: Annotated[str, typer.Option("--provider")] = "openai",
-    model: Annotated[str | None, typer.Option("--model")] = None,
-    api_key_env: Annotated[str | None, typer.Option("--api-key-env")] = None,
-    max_concurrency: Annotated[int, typer.Option("--max-concurrency", min=1)] = 5,
-    resume: Annotated[bool, typer.Option("--resume/--no-resume")] = True,
-    force: Annotated[bool, typer.Option("--force")] = False,
-    glossary: Annotated[
-        Path | None,
-        typer.Option("--glossary", exists=True, file_okay=True, dir_okay=False),
-    ] = None,
-    name_map: Annotated[
-        Path | None,
-        typer.Option("--name-map", exists=True, file_okay=True, dir_okay=False),
-    ] = None,
-    chapter_strategy: Annotated[str, typer.Option("--chapter-strategy")] = "toc-first",
-    manual_toc: Annotated[
-        Path | None,
-        typer.Option("--manual-toc", exists=True, file_okay=True, dir_okay=False),
-    ] = None,
-    chunk_size: Annotated[int, typer.Option("--chunk-size", min=100)] = 3000,
-    render_pdf: Annotated[bool, typer.Option("--render-pdf/--no-render-pdf")] = True,
-) -> None:
-    """Translate text-based PDF and EPUB books into Simplified Chinese."""
-    _run_engineering_mode(
-        ctx,
-        input_path=input_path,
-        output_path=output_path,
-        provider=provider,
-        model=model,
-        api_key_env=api_key_env,
-        max_concurrency=max_concurrency,
-        resume=resume,
-        force=force,
-        glossary=glossary,
-        name_map=name_map,
-        chapter_strategy=chapter_strategy,
-        manual_toc=manual_toc,
-        chunk_size=chunk_size,
-        render_pdf=render_pdf,
-    )
-
-
-@engineering_app.callback(invoke_without_command=True)
-def engineering(
-    ctx: typer.Context,
-    input_path: Annotated[
-        Path | None,
-        typer.Option("--input", exists=True, file_okay=True, dir_okay=True),
-    ] = None,
-    output_path: Annotated[Path, typer.Option("--output")] = DEFAULT_OUTPUT_PATH,
-    provider: Annotated[str, typer.Option("--provider")] = "openai",
-    model: Annotated[str | None, typer.Option("--model")] = None,
-    api_key_env: Annotated[str | None, typer.Option("--api-key-env")] = None,
-    max_concurrency: Annotated[int, typer.Option("--max-concurrency", min=1)] = 5,
-    resume: Annotated[bool, typer.Option("--resume/--no-resume")] = True,
-    force: Annotated[bool, typer.Option("--force")] = False,
-    glossary: Annotated[
-        Path | None,
-        typer.Option("--glossary", exists=True, file_okay=True, dir_okay=False),
-    ] = None,
-    name_map: Annotated[
-        Path | None,
-        typer.Option("--name-map", exists=True, file_okay=True, dir_okay=False),
-    ] = None,
-    chapter_strategy: Annotated[str, typer.Option("--chapter-strategy")] = "toc-first",
-    manual_toc: Annotated[
-        Path | None,
-        typer.Option("--manual-toc", exists=True, file_okay=True, dir_okay=False),
-    ] = None,
-    chunk_size: Annotated[int, typer.Option("--chunk-size", min=100)] = 3000,
-    render_pdf: Annotated[bool, typer.Option("--render-pdf/--no-render-pdf")] = True,
-) -> None:
-    """Engineering workflows."""
-    _run_engineering_mode(
-        ctx,
-        input_path=input_path,
-        output_path=output_path,
-        provider=provider,
-        model=model,
-        api_key_env=api_key_env,
-        max_concurrency=max_concurrency,
-        resume=resume,
-        force=force,
-        glossary=glossary,
-        name_map=name_map,
-        chapter_strategy=chapter_strategy,
-        manual_toc=manual_toc,
-        chunk_size=chunk_size,
-        render_pdf=render_pdf,
-    )
+app.callback(invoke_without_command=True)(_engineering_command)
+engineering_app.callback(invoke_without_command=True)(_engineering_command)
+run = _engineering_command
 
 
 @publishing_app.callback(invoke_without_command=True)

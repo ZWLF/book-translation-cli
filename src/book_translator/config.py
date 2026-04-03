@@ -4,8 +4,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
@@ -66,11 +67,11 @@ class RunConfig(BaseModel):
 
 
 class PublishingRunConfig(BaseModel):
-    style: str = "non-fiction-publishing"
-    from_stage: str = "draft"
-    to_stage: str = "final-review"
-    mode: str = "publishing"
-    max_concurrency: int = 3
+    style: Literal["non-fiction-publishing"] = "non-fiction-publishing"
+    from_stage: Literal["draft"] = "draft"
+    to_stage: Literal["final-review"] = "final-review"
+    mode: Literal["publishing"] = "publishing"
+    max_concurrency: int = Field(default=3, ge=1, le=16)
 
 
 def _read_dotenv_value(path: Path, key: str) -> str | None:
