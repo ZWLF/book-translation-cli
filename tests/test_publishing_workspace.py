@@ -58,3 +58,22 @@ def test_publishing_workspace_normalizes_dict_stage_state_payload(
         fingerprint="abc123",
         status="ready",
     )
+
+
+def test_publishing_workspace_uses_method_stage_over_dict_stage(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "book")
+
+    workspace.write_publishing_stage_state(
+        "draft",
+        {
+            "stage": "final",
+            "fingerprint": "abc123",
+            "status": "ready",
+        },
+    )
+
+    assert workspace.read_publishing_stage_state("draft") == PublishingStageState(
+        stage="draft",
+        fingerprint="abc123",
+        status="ready",
+    )

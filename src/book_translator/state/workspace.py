@@ -154,4 +154,4 @@ class Workspace:
     ) -> PublishingStageState:
         if isinstance(payload, PublishingStageState):
             return payload.model_copy(update={"stage": stage})
-        return PublishingStageState.model_validate({"stage": stage, **payload})
+        return PublishingStageState.model_validate({**payload, "stage": stage})
