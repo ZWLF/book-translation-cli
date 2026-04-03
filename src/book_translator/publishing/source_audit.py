@@ -22,7 +22,7 @@ def audit_source_against_target(
 
     if _looks_like_collapsed_numbered_list(source_text=source_text, target_text=target_text):
         findings.append(
-            PublishingAuditFinding(
+            _build_audit_finding(
                 chapter_id=chapter_id,
                 finding_type="collapsed_numbered_list",
                 severity="high",
@@ -30,6 +30,8 @@ def audit_source_against_target(
                 target_excerpt=_excerpt(target_text),
                 reason="Ordered list markers in source are not preserved as block items in target.",
                 auto_fixable=True,
+                confidence=0.95,
+                source_signature=_collapsed_numbered_list_signature(source_text),
             )
         )
 
@@ -92,18 +94,21 @@ def _detect_possible_omissions(
     if missing_count <= 0:
         return []
 
+    missing_units = source_units[-missing_count:]
     return [
-        PublishingAuditFinding(
+        _build_audit_finding(
             chapter_id=chapter_id,
             finding_type="possible_omission",
             severity="medium",
-            source_excerpt=_excerpt("\n".join(source_units[-missing_count:])),
+            source_excerpt=_excerpt("\n".join(missing_units)),
             target_excerpt=_excerpt(target_text),
             reason=(
                 "Source contains additional structural units that are not represented in target; "
                 "review for potential omissions."
             ),
             auto_fixable=False,
+            confidence=0.65,
+            source_signature=_possible_omission_signature(missing_units),
         )
     ]
 
@@ -133,7 +138,7 @@ def _detect_callout_candidates(
 
     source_excerpt = quote_matches[0].strip()
     return [
-        PublishingAuditFinding(
+        _build_audit_finding(
             chapter_id=chapter_id,
             finding_type="callout_candidate",
             severity="medium",
@@ -144,6 +149,8 @@ def _detect_callout_candidates(
                 "explicit callout treatment."
             ),
             auto_fixable=True,
+            confidence=0.75,
+            source_signature=f"callout_candidate:{_signature_token(source_excerpt)}",
         )
     ]
 
@@ -165,7 +172,7 @@ def _detect_question_answer_structure(
         return []
 
     return [
-        PublishingAuditFinding(
+        _build_audit_finding(
             chapter_id=chapter_id,
             finding_type="question_answer_structure",
             severity="medium",
@@ -176,8 +183,53 @@ def _detect_question_answer_structure(
                 "Q&A block structure."
             ),
             auto_fixable=False,
+            confidence=0.7,
+            source_signature=(
+                f"question_answer_structure:q{source_questions}:a{source_answers}"
+            ),
         )
     ]
+
+
+def _build_audit_finding(
+    *,
+    chapter_id: str,
+    finding_type: str,
+    severity: str,
+    source_excerpt: str,
+    target_excerpt: str,
+    reason: str,
+    auto_fixable: bool,
+    confidence: float,
+    source_signature: str | None = None,
+) -> PublishingAuditFinding:
+    return PublishingAuditFinding(
+        chapter_id=chapter_id,
+        block_id=None,
+        source_signature=source_signature,
+        finding_type=finding_type,
+        severity=severity,
+        source_excerpt=source_excerpt,
+        target_excerpt=target_excerpt,
+        reason=reason,
+        auto_fixable=auto_fixable,
+        confidence=confidence,
+        agent_role="audit",
+    )
+
+
+def _collapsed_numbered_list_signature(source_text: str) -> str:
+    items = _extract_numbered_block_items(source_text)
+    if not items:
+        return "collapsed_numbered_list:none"
+    run = "-".join(str(item) for item in items[:5])
+    return f"collapsed_numbered_list:{run}"
+
+
+def _possible_omission_signature(missing_units: list[str]) -> str:
+    normalized_units = [_signature_token(unit) for unit in missing_units if _signature_token(unit)]
+    joined = "-".join(normalized_units[:3]) or "none"
+    return f"possible_omission:{len(missing_units)}:{joined}"
 
 
 def _extract_numbered_block_items(text: str) -> list[int]:
@@ -306,3 +358,17 @@ def _excerpt(text: str, *, max_len: int = 180) -> str:
     if len(compact) <= max_len:
         return compact
     return f"{compact[: max_len - 1]}..."
+
+
+def _signature_token(text: str, *, max_words: int = 6) -> str:
+    words = re.findall(r"[A-Za-z0-9]+", text.lower())
+    if words:
+        return "-".join(words[:max_words])
+
+    cjk_chars = re.findall(r"[\u4e00-\u9fff]", text)
+    if cjk_chars:
+        return "".join(cjk_chars[:8])
+
+    compact = re.sub(r"\s+", "-", text.strip().lower())
+    compact = re.sub(r"[^a-z0-9\-\u4e00-\u9fff]", "", compact)
+    return compact[:32] or "none"

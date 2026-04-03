@@ -159,12 +159,16 @@ class StructuredPublishingBook(BaseModel):
 
 class PublishingAuditFinding(BaseModel):
     chapter_id: str
+    block_id: str | None = None
+    source_signature: str | None = None
     finding_type: str
-    severity: str
+    severity: Literal["low", "medium", "high"]
     source_excerpt: str
     target_excerpt: str
     reason: str
     auto_fixable: bool = False
+    confidence: float = 0.5
+    agent_role: Literal["audit", "review", "arbiter"] = "audit"
 
 
 class PublishingLayoutAnnotation(BaseModel):
