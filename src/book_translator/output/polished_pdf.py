@@ -51,6 +51,7 @@ class EditionFrontMatter:
     note_heading: str
     note_origin: str
     note_body: str
+    metadata_lines: list[str]
 
 
 def build_printable_book(
@@ -292,7 +293,7 @@ def render_polished_pdf(
 
     cover_title_zh = book.title_zh or f"{book.title_en} 简体中文版"
     cover_title_en = book.title_en
-    edition_copy = _edition_front_matter(edition_label)
+    edition_copy = _edition_front_matter(book, edition_label)
     cover_author = book.author or "未知作者"
 
     cover_title_style = ParagraphStyle(
@@ -490,14 +491,11 @@ def render_polished_pdf(
         )
     )
     story.append(
-        Paragraph(
-            f"来源文件：{book.source_path}<br/>翻译模型：{book.model}<br/>提供方：{book.provider}",
-            note_body_style,
-        )
+        Paragraph("<br/>".join(edition_copy.metadata_lines), note_body_style)
     )
     if book.estimated_cost_usd is not None:
         story.append(
-            Paragraph(f"本次翻译估算成本：${book.estimated_cost_usd:.6f}", note_body_style)
+            Paragraph(f"本次实际翻译成本：${book.estimated_cost_usd:.6f}", note_body_style)
         )
     story.append(PageBreak())
 
@@ -677,7 +675,7 @@ def render_polished_pdf(
     doc.multiBuild(story)
 
 
-def _edition_front_matter(edition_label: str) -> EditionFrontMatter:
+def _edition_front_matter(book: PrintableBook, edition_label: str) -> EditionFrontMatter:
     if edition_label == "publishing":
         return EditionFrontMatter(
             cover_badge="出版级翻译精排版",
@@ -688,6 +686,15 @@ def _edition_front_matter(edition_label: str) -> EditionFrontMatter:
                 "版式经过本地书籍化渲染，"
                 "目标是在保留原书编辑风格线索的前提下，获得稳定、清晰、适合连续阅读的中文版本。"
             ),
+            metadata_lines=[
+                f"翻译原件：{book.title_en}",
+                "开发者：曾伟良（Weiliang Zeng）",
+                "开发方式：基于 Codex 的 Vibe Coding 翻译程序",
+                f"模型 API：{book.model}",
+                "联系方式：weiliangzeng03@gmail.com",
+                "项目地址：https://github.com/ZWLF/book-translation-cli",
+                "公开说明：本翻译文件免费公开，欢迎大家支持我的项目。",
+            ],
         )
 
     return EditionFrontMatter(
@@ -699,6 +706,11 @@ def _edition_front_matter(edition_label: str) -> EditionFrontMatter:
             "版式经过本地书籍化渲染，"
             "目标是获得稳定、清晰、适合连续阅读的中文版本，而不是逐页复刻原版英文 PDF 的视觉设计。"
         ),
+        metadata_lines=[
+            f"来源文件：{book.source_path}",
+            f"翻译模型：{book.model}",
+            f"提供方：{book.provider}",
+        ],
     )
 
 
@@ -959,8 +971,14 @@ def _looks_like_translated_title_candidate(text: str) -> bool:
 def _parse_title_and_author(stem: str) -> tuple[str, str | None]:
     match = re.match(r"^(?P<title>.+?)\s*\((?P<author>[^()]+)\)$", stem)
     if not match:
-        return stem, None
-    return match.group("title").strip(), match.group("author").strip()
+        return _normalize_book_title(stem), None
+    return _normalize_book_title(match.group("title").strip()), match.group("author").strip()
+
+
+def _normalize_book_title(title: str) -> str:
+    if title == "The Book of Elon A Guide to Purpose and Success":
+        return "The Book of Elon: A Guide to Purpose and Success"
+    return title
 
 
 def _source_stem(source_path: str) -> str:

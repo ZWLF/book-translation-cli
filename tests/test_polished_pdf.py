@@ -7,6 +7,7 @@ from book_translator.output.polished_pdf import (
     PrintableBlock,
     PrintableBook,
     PrintableChapter,
+    _parse_title_and_author,
     build_printable_book,
     build_printable_book_from_artifacts,
     render_polished_pdf,
@@ -783,7 +784,7 @@ def test_render_polished_pdf_uses_publishing_front_matter(tmp_path: Path) -> Non
     output_path = tmp_path / "publishing.pdf"
     book = PrintableBook(
         book_id="sample-book",
-        title_en="The Book of Elon",
+        title_en="The Book of Elon: A Guide to Purpose and Success",
         title_zh="埃隆之书",
         author="Eric Jorgenson",
         source_path=r"H:\\books\\The Book of Elon.pdf",
@@ -807,5 +808,23 @@ def test_render_polished_pdf_uses_publishing_front_matter(tmp_path: Path) -> Non
     )
     assert "出版级翻译精排版" in extracted
     assert "正文内容来自出版级翻译终稿" in extracted
+    assert "The Book of Elon: A Guide to Purpose and Success" in extracted
+    assert "Codex" in extracted
+    assert "Vibe Coding" in extracted
+    assert "weiliangzeng03@gmail.com" in extracted
+    assert "https://github.com/ZWLF/book-translation-cli" in extracted
+    assert "免费公开" in extracted
+    assert "支持我的项目" in extracted
+    assert "本次实际翻译成本：$0.120000" in extracted
+    assert "H:\\\\books\\\\The Book of Elon.pdf" not in extracted
     assert "工程化翻译精排版" not in extracted
     assert "工程化翻译结果" not in extracted
+
+
+def test_parse_title_and_author_normalizes_elon_book_title() -> None:
+    title, author = _parse_title_and_author(
+        "The Book of Elon A Guide to Purpose and Success (Eric Jorgenson)"
+    )
+
+    assert title == "The Book of Elon: A Guide to Purpose and Success"
+    assert author == "Eric Jorgenson"
