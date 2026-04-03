@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import re
 
-from book_translator.models import PublishingAuditFinding
+from book_translator.models import (
+    PublishingAuditFinding,
+    PublishingChapterArtifact,
+    StructuredPublishingChapter,
+)
+from book_translator.publishing.structure import build_structured_chapter
 
 _INLINE_NUMBERED_MARKER_RE = re.compile(r"(?<!\d)(\d{1,3})[.)]\s*")
 _BLOCK_NUMBERED_LINE_RE = re.compile(r"^\s*(\d{1,3})[.)]\s+\S")
@@ -18,6 +23,25 @@ def apply_editorial_repairs(
     if _should_restore_numbered_list(findings):
         revised = _restore_numbered_list_blocks(chapter_text=revised, source_text=source_text)
     return normalize_editorial_spacing(revised)
+
+
+def apply_structured_editorial_repairs(
+    *,
+    chapter: PublishingChapterArtifact,
+    source_text: str,
+    findings: list[PublishingAuditFinding],
+) -> StructuredPublishingChapter:
+    revised_text = apply_editorial_repairs(
+        chapter_text=chapter.text,
+        source_text=source_text,
+        findings=findings,
+    )
+    return build_structured_chapter(
+        artifact=chapter.model_copy(update={"text": revised_text}),
+        source_text=source_text,
+        source_assets=[],
+        source_title=chapter.title,
+    )
 
 
 def normalize_editorial_spacing(text: str) -> str:

@@ -83,6 +83,10 @@ def test_publishing_workspace_exposes_artifact_paths(tmp_path: Path) -> None:
         "target_excerpt": "Translated term",
         "reason": "Terminology mismatch with glossary.",
         "auto_fixable": True,
+        "agent_role": "audit",
+        "block_id": None,
+        "confidence": 0.5,
+        "source_signature": None,
     }
 
     annotation = PublishingLayoutAnnotation(

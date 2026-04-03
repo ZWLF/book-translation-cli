@@ -221,6 +221,10 @@ class Workspace:
                 self.publishing_deep_review_findings_path,
                 self.publishing_deep_review_chapters_path,
                 self.publishing_deep_review_decisions_path,
+                self.publishing_audit_source_path,
+                self.publishing_audit_review_path,
+                self.publishing_audit_consensus_path,
+                self.publishing_audit_report_path,
             ],
         }
         for path in stage_paths.get(stage, []):

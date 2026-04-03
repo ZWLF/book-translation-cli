@@ -12,7 +12,10 @@ from book_translator.chaptering.manual_toc import load_manual_toc_titles
 from book_translator.chunking.splitter import split_chapter_into_chunks
 from book_translator.config import PUBLISHING_STAGES, PublishingRunConfig
 from book_translator.models import Chapter, Manifest, PublishingChapterArtifact
-from book_translator.output.assembler import assemble_publishing_output_text
+from book_translator.output.assembler import (
+    assemble_publishing_output_text,
+    assemble_structured_publishing_output_text,
+)
 from book_translator.output.polished_pdf import (
     build_printable_book_from_artifacts,
     render_polished_pdf,
@@ -31,6 +34,7 @@ from book_translator.publishing.final_review import (
 from book_translator.publishing.lexicon import merge_lexicon_overrides, normalize_lexicon_records
 from book_translator.publishing.proofread import PROOFREAD_STAGE_VERSION, proofread_chapter
 from book_translator.publishing.revision import revise_chapter
+from book_translator.publishing.structure import build_structured_book, build_structured_chapter
 from book_translator.state.workspace import Workspace
 from book_translator.translation.orchestrator import translate_chunks
 from book_translator.utils import file_fingerprint, slugify
@@ -585,6 +589,10 @@ async def _ensure_deep_review_stage(
     final_review_state = workspace.read_publishing_stage_state("final-review")
     if final_review_state is None:
         raise ValueError("Final-review state is missing. Re-run from the final-review stage.")
+    working_final_artifacts = final_artifacts or _load_publishing_artifacts(
+        workspace.publishing_final_chapters_path,
+        workspace,
+    )
 
     fingerprint = _deep_review_stage_fingerprint(
         workspace=workspace,
@@ -595,6 +603,10 @@ async def _ensure_deep_review_stage(
         workspace.publishing_deep_review_findings_path,
         workspace.publishing_deep_review_chapters_path,
         workspace.publishing_deep_review_decisions_path,
+        workspace.publishing_audit_source_path,
+        workspace.publishing_audit_review_path,
+        workspace.publishing_audit_consensus_path,
+        workspace.publishing_audit_report_path,
         workspace.publishing_final_text_path,
     ]
     if config.render_pdf:
@@ -616,7 +628,28 @@ async def _ensure_deep_review_stage(
         )
 
     _clear_stage_and_downstream(workspace, stage)
-    result = run_deep_review(source_chapters=source_chapters, final_artifacts=final_artifacts)
+    result = run_deep_review(
+        source_chapters=source_chapters,
+        final_artifacts=working_final_artifacts,
+        enable_cross_review=config.enable_cross_review,
+        audit_depth=config.audit_depth,
+    )
+    workspace.write_publishing_jsonl(
+        workspace.publishing_audit_source_path,
+        [finding.model_dump() for finding in result.findings],
+    )
+    workspace.write_publishing_jsonl(
+        workspace.publishing_audit_review_path,
+        [finding.model_dump() for finding in result.review_findings],
+    )
+    workspace._write_publishing_json(
+        workspace.publishing_audit_consensus_path,
+        result.consensus.model_dump(),
+    )
+    workspace._write_publishing_json(
+        workspace.publishing_audit_report_path,
+        result.final_report,
+    )
     workspace.write_publishing_jsonl(
         workspace.publishing_deep_review_findings_path,
         [finding.model_dump() for finding in result.findings],
@@ -632,7 +665,8 @@ async def _ensure_deep_review_stage(
     await _rebuild_stable_publishing_outputs(
         workspace=workspace,
         manifest=manifest,
-        chapters=final_artifacts,
+        chapters=working_final_artifacts,
+        deep_review_book=result.structured_book,
         deep_review_chapters=result.revised_chapters,
         deep_review_decisions=result.decisions,
         config=config,
@@ -800,6 +834,7 @@ def _deep_review_stage_fingerprint(
     return _fingerprint_payload(
         {
             "final_review_stage": final_review_state.model_dump(),
+            "final_chapters_fingerprint": _final_chapters_fingerprint(workspace),
             "style": config.style,
             "deep_review_stage_version": DEEP_REVIEW_STAGE_VERSION,
             "pdf_annotation_renderer_version": PDF_ANNOTATION_RENDERER_VERSION,
@@ -817,6 +852,14 @@ def _deep_review_decisions_fingerprint(workspace: Workspace) -> str:
     )
 
 
+def _final_chapters_fingerprint(workspace: Workspace) -> str:
+    if not workspace.publishing_final_chapters_path.exists():
+        return "missing"
+    return _fingerprint_payload(
+        workspace.read_publishing_jsonl(workspace.publishing_final_chapters_path)
+    )
+
+
 async def _rebuild_stable_publishing_outputs(
     *,
     workspace: Workspace,
@@ -825,14 +868,16 @@ async def _rebuild_stable_publishing_outputs(
     config: PublishingRunConfig,
     provider: BaseProvider | None,
     summary_metrics: dict[str, float | int],
+    deep_review_book: object | None = None,
     deep_review_chapters: list[PublishingChapterArtifact] | None = None,
     deep_review_decisions: dict[str, object] | None = None,
 ) -> None:
     workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
-    final_text = assemble_publishing_output_text(
-        chapters,
-        deep_review_chapters=deep_review_chapters,
+    structured_book = _build_structured_publishing_book(
+        chapters=deep_review_chapters or chapters,
+        structured_book=deep_review_book,
     )
+    final_text = assemble_structured_publishing_output_text(structured_book)
     temp_text_path = workspace.publishing_final_text_path.with_suffix(".txt.tmp")
     temp_pdf_path = workspace.publishing_final_pdf_path.with_suffix(".pdf.tmp")
     temp_text_path.write_text(final_text, encoding="utf-8")
@@ -877,3 +922,23 @@ async def _rebuild_stable_publishing_outputs(
             temp_text_path.unlink()
         if temp_pdf_path.exists():
             temp_pdf_path.unlink()
+
+
+def _build_structured_publishing_book(
+    *,
+    chapters: list[PublishingChapterArtifact],
+    structured_book: object | None,
+) -> object:
+    if structured_book is not None:
+        return structured_book
+
+    structured_chapters = [
+        build_structured_chapter(
+            artifact=chapter,
+            source_text=chapter.text,
+            source_assets=[],
+            source_title=chapter.title,
+        )
+        for chapter in sorted(chapters, key=lambda item: item.chapter_index)
+    ]
+    return build_structured_book(title="", chapters=structured_chapters)

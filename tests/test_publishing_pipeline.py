@@ -362,7 +362,7 @@ async def test_process_book_publishing_runs_deep_review_and_rebuilds_final_text(
     input_path = tmp_path / "deep-review.epub"
     _build_numbered_list_epub(input_path)
 
-    await process_book_publishing(
+    summary = await process_book_publishing(
         input_path=input_path,
         output_root=tmp_path / "out",
         config=PublishingRunConfig(
@@ -394,7 +394,17 @@ async def test_process_book_publishing_runs_deep_review_and_rebuilds_final_text(
     assert (book_dir / "deep_review" / "findings.jsonl").exists()
     assert (book_dir / "deep_review" / "revised_chapters.jsonl").exists()
     assert (book_dir / "deep_review" / "decisions.json").exists()
-    assert "核心方法\n\n1. 第一条原则。\n2. 第二条原则。\n3. 第三条原则。" in final_text
+    assert (book_dir / "audit" / "source_audit.jsonl").exists()
+    assert (book_dir / "audit" / "review_audit.jsonl").exists()
+    assert (book_dir / "audit" / "consensus.json").exists()
+    assert (book_dir / "audit" / "final_audit_report.json").exists()
+    assert "译文::核心方法" in final_text
+    assert "1. 第一条原则。" in final_text
+    assert "2. 第二条原则。" in final_text
+    assert "3. 第三条原则。" in final_text
+    assert "First principle." not in final_text
+
+
 @pytest.mark.asyncio
 async def test_process_book_publishing_resume_from_revision_keeps_lexicon_decisions(
     tmp_path: Path,
