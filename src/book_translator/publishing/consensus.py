@@ -51,7 +51,10 @@ def merge_consensus_findings(
     result = PublishingFindingConsensusResult()
     for key in sorted(grouped):
         item = grouped[key]
-        if _is_low_confidence(item.audit_finding, threshold=low_confidence_threshold) or _is_low_confidence(
+        if _is_low_confidence(
+            item.audit_finding,
+            threshold=low_confidence_threshold,
+        ) or _is_low_confidence(
             item.review_finding,
             threshold=low_confidence_threshold,
         ):
@@ -97,7 +100,9 @@ def arbiter_fix_candidates(
 
 def finding_consensus_key(finding: PublishingAuditFinding) -> str:
     block_id = finding.block_id or "-"
-    identity = finding.source_signature or _source_excerpt_fingerprint(source_excerpt=finding.source_excerpt)
+    identity = finding.source_signature or _source_excerpt_fingerprint(
+        source_excerpt=finding.source_excerpt
+    )
     return f"{finding.chapter_id}|{block_id}|{finding.finding_type}|{identity}"
 
 
@@ -130,7 +135,11 @@ def _findings_equivalent(
 def _preferred_consensus_finding(
     item: PublishingFindingConsensusItem,
 ) -> PublishingAuditFinding | None:
-    findings = [finding for finding in (item.review_finding, item.audit_finding) if finding is not None]
+    findings = [
+        finding
+        for finding in (item.review_finding, item.audit_finding)
+        if finding is not None
+    ]
     if not findings:
         return None
     return max(findings, key=lambda finding: finding.confidence)
@@ -178,4 +187,6 @@ def _normalize_excerpt(text: str) -> str:
 
 
 def _source_identity(finding: PublishingAuditFinding) -> str:
-    return finding.source_signature or _source_excerpt_fingerprint(source_excerpt=finding.source_excerpt)
+    return finding.source_signature or _source_excerpt_fingerprint(
+        source_excerpt=finding.source_excerpt
+    )

@@ -4,10 +4,9 @@ import re
 
 from book_translator.models import (
     PublishingAuditFinding,
-    PublishingChapterArtifact,
+    PublishingBlock,
     StructuredPublishingChapter,
 )
-from book_translator.publishing.structure import build_structured_chapter
 
 _INLINE_NUMBERED_MARKER_RE = re.compile(r"(?<!\d)(\d{1,3})[.)]\s*")
 _BLOCK_NUMBERED_LINE_RE = re.compile(r"^\s*(\d{1,3})[.)]\s+\S")
@@ -27,21 +26,30 @@ def apply_editorial_repairs(
 
 def apply_structured_editorial_repairs(
     *,
-    chapter: PublishingChapterArtifact,
-    source_text: str,
+    chapter: StructuredPublishingChapter,
     findings: list[PublishingAuditFinding],
 ) -> StructuredPublishingChapter:
-    revised_text = apply_editorial_repairs(
-        chapter_text=chapter.text,
-        source_text=source_text,
-        findings=findings,
+    repaired_blocks = [
+        _repair_structured_block(block, findings=findings)
+        for block in chapter.blocks
+    ]
+    return chapter.model_copy(
+        update={
+            "blocks": [
+                block for block in repaired_blocks if block.text.strip() or block.kind == "image"
+            ]
+        }
     )
-    return build_structured_chapter(
-        artifact=chapter.model_copy(update={"text": revised_text}),
-        source_text=source_text,
-        source_assets=[],
-        source_title=chapter.title,
-    )
+
+
+def _repair_structured_block(
+    block: PublishingBlock,
+    *,
+    findings: list[PublishingAuditFinding],
+) -> PublishingBlock:
+    if block.kind == "ordered_item":
+        return block.model_copy(update={"text": normalize_editorial_spacing(block.text)})
+    return block.model_copy(update={"text": normalize_editorial_spacing(block.text)})
 
 
 def normalize_editorial_spacing(text: str) -> str:

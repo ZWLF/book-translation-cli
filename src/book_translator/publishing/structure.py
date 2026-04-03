@@ -11,6 +11,7 @@ from book_translator.models import (
 )
 
 _NUMBERED_ITEM_RE = re.compile(r"^\s*(\d{1,3})[.)]\s*(.+?)\s*$")
+_INLINE_NUMBERED_MARKER_RE = re.compile(r"(?<!\d)(\d{1,3})[.)]\s*")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
@@ -115,9 +116,31 @@ def _extract_numbered_items(paragraph: str) -> list[tuple[str, str]]:
     for line in lines:
         match = _NUMBERED_ITEM_RE.match(line)
         if match is None:
-            return []
+            return _extract_inline_numbered_items(paragraph)
+        if len(list(_INLINE_NUMBERED_MARKER_RE.finditer(line))) > 1:
+            return _extract_inline_numbered_items(paragraph)
         items.append((match.group(1), match.group(2).strip()))
     return items
+
+
+def _extract_inline_numbered_items(paragraph: str) -> list[tuple[str, str]]:
+    compact = re.sub(r"\s+", " ", paragraph).strip()
+    matches = list(_INLINE_NUMBERED_MARKER_RE.finditer(compact))
+    if len(matches) < 3:
+        return []
+
+    markers = [int(match.group(1)) for match in matches]
+    if markers[:3] != [1, 2, 3]:
+        return []
+
+    items: list[tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(compact)
+        item_text = compact[match.end() : end].strip()
+        if not item_text:
+            continue
+        items.append((match.group(1), item_text))
+    return items if len(items) >= 3 else []
 
 
 def _extract_numbered_source_anchors(source_text: str) -> list[str]:

@@ -88,16 +88,34 @@ def test_merge_consensus_groups_agreed_disputed_and_low_confidence_findings() ->
         review_findings=review_findings,
     )
 
-    assert [item.finding_key for item in result.agreed] == [finding_consensus_key(audit_findings[0])]
-    assert [item.finding_key for item in result.disputed] == [finding_consensus_key(audit_findings[1])]
-    assert [item.finding_key for item in result.low_confidence] == [finding_consensus_key(audit_findings[2])]
+    assert [item.finding_key for item in result.agreed] == [
+        finding_consensus_key(audit_findings[0])
+    ]
+    assert [item.finding_key for item in result.disputed] == [
+        finding_consensus_key(audit_findings[1])
+    ]
+    assert [item.finding_key for item in result.low_confidence] == [
+        finding_consensus_key(audit_findings[2])
+    ]
 
 
 def test_build_arbitration_queue_returns_disputed_items_in_deterministic_order() -> None:
     result = merge_consensus_findings(
         audit_findings=[
-            _finding(chapter_id="c2", finding_type="beta_issue", block_id="b-2", source_signature="beta", confidence=0.9),
-            _finding(chapter_id="c1", finding_type="alpha_issue", block_id="b-1", source_signature="alpha", confidence=0.9),
+            _finding(
+                chapter_id="c2",
+                finding_type="beta_issue",
+                block_id="b-2",
+                source_signature="beta",
+                confidence=0.9,
+            ),
+            _finding(
+                chapter_id="c1",
+                finding_type="alpha_issue",
+                block_id="b-1",
+                source_signature="alpha",
+                confidence=0.9,
+            ),
         ],
         review_findings=[
             _finding(
@@ -336,7 +354,9 @@ def test_merge_consensus_agrees_when_only_prose_fields_differ() -> None:
         review_findings=[review_finding],
     )
 
-    assert [item.finding_key for item in result.agreed] == [finding_consensus_key(audit_finding)]
+    assert [item.finding_key for item in result.agreed] == [
+        finding_consensus_key(audit_finding)
+    ]
     assert result.disputed == []
     assert result.low_confidence == []
 
@@ -371,6 +391,8 @@ def test_merge_consensus_agrees_when_excerpts_differ_but_source_signature_matche
         review_findings=[review_finding],
     )
 
-    assert [item.finding_key for item in result.agreed] == [finding_consensus_key(audit_finding)]
+    assert [item.finding_key for item in result.agreed] == [
+        finding_consensus_key(audit_finding)
+    ]
     assert result.disputed == []
     assert result.low_confidence == []

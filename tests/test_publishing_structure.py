@@ -46,7 +46,10 @@ def test_structure_builder_preserves_source_anchor_order_when_numbering_restarts
             title="Restarted Lists",
             text="1. 第一组一\n2. 第一组二\n\n1. 第二组一\n2. 第二组二",
         ),
-        source_text="1. First group one\n2. First group two\n\n1. Second group one\n2. Second group two",
+        source_text=(
+            "1. First group one\n2. First group two\n\n"
+            "1. Second group one\n2. Second group two"
+        ),
         source_assets=[],
     )
 
@@ -56,6 +59,31 @@ def test_structure_builder_preserves_source_anchor_order_when_numbering_restarts
         "2. First group two",
         "1. Second group one",
         "2. Second group two",
+    ]
+
+
+def test_structure_builder_splits_inline_numbered_items_into_ordered_blocks() -> None:
+    chapter = build_structured_chapter(
+        artifact=PublishingChapterArtifact(
+            chapter_id="c1c",
+            chapter_index=4,
+            title="Inline Rules",
+            text="1. 第一条 2. 第二条 3. 第三条",
+        ),
+        source_text="1. First\n2. Second\n3. Third",
+        source_assets=[],
+    )
+
+    ordered_blocks = [block for block in chapter.blocks if block.kind == "ordered_item"]
+    assert [block.text for block in ordered_blocks] == [
+        "第一条",
+        "第二条",
+        "第三条",
+    ]
+    assert [block.source_anchor for block in ordered_blocks] == [
+        "1. First",
+        "2. Second",
+        "3. Third",
     ]
 
 
