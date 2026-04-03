@@ -107,6 +107,8 @@ run = _engineering_command
 @publishing_app.callback(invoke_without_command=True)
 def publishing(ctx: typer.Context) -> None:
     """Publishing workflows."""
+    if ctx.invoked_subcommand is not None:
+        return
     if ctx.resilient_parsing:
         return
     typer.echo(ctx.get_help())

@@ -25,6 +25,16 @@ def test_publishing_run_config_rejects_invalid_stage_and_mode() -> None:
         )
 
 
+def test_publishing_run_config_rejects_invalid_mode() -> None:
+    with pytest.raises(ValidationError):
+        PublishingRunConfig(mode="engineering")
+
+
 def test_publishing_run_config_rejects_invalid_max_concurrency() -> None:
     with pytest.raises(ValidationError):
         PublishingRunConfig(max_concurrency=0)
+
+
+def test_publishing_run_config_rejects_upper_bound_max_concurrency() -> None:
+    with pytest.raises(ValidationError):
+        PublishingRunConfig(max_concurrency=17)
