@@ -176,7 +176,11 @@ def _build_printable_book_from_entries(
                     printable_blocks.append(
                         PrintableBlock(
                             kind="section_heading",
-                            text=block_text if citation_numbers else _tighten_mixed_text_spacing(cleaned_lines[0]),
+                            text=(
+                                block_text
+                                if citation_numbers
+                                else _tighten_mixed_text_spacing(cleaned_lines[0])
+                            ),
                         )
                     )
                     continue
