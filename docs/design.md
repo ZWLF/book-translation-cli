@@ -1,6 +1,9 @@
 # Design Notes
 
-This repository implements the engineering-grade phase of the book translation workflow.
+This repository implements two translation workflows on one shared foundation:
+
+- `engineering`: accurate, resumable, chunk-based translation for bulk processing
+- `publishing`: quality-first non-fiction translation with explicit editorial stages
 
 ## Version 1 Guarantees
 
@@ -18,6 +21,41 @@ This repository implements the engineering-grade phase of the book translation w
   - `error_log.json`
   - `run_summary.json`
   - `translated.txt`
+
+## Publishing Workflow Guarantees
+
+- Reuses the same extraction, chaptering, chunking, provider, and PDF infrastructure
+- Keeps publishing artifacts under `out/<book>/publishing/` so engineering outputs stay isolated
+- Runs five explicit stages:
+  - `draft`
+  - `lexicon`
+  - `revision`
+  - `proofread`
+  - `final-review`
+- Produces auditable editorial artifacts:
+  - `draft/chapters.jsonl`
+  - `lexicon/glossary.json`
+  - `lexicon/names.json`
+  - `lexicon/decisions.json`
+  - `revision/revised_chapters.jsonl`
+  - `proofread/proofread_notes.jsonl`
+  - `proofread/proofread_changes.jsonl`
+  - `final/final_chapters.jsonl`
+  - `final/translated.txt`
+  - `final/translated.pdf`
+  - `editorial_log.json`
+  - `run_summary.json`
+- Supports stage-aware resume via `--from-stage` / `--to-stage`
+- Lets `qa-pdf` target the publishing final PDF when the engineering PDF is absent
+
+## Publishing Quality Profile
+
+- Non-fiction first
+- Fidelity first, elegance second
+- Formal, restrained Chinese prose
+- Whole-book term and proper-name consistency
+- Automated proofreading and whole-book final review
+- No fiction-first rewriting and no human review UI in this phase
 
 ## Version 1 Non-Goals
 

@@ -38,3 +38,8 @@ def test_publishing_run_config_rejects_invalid_max_concurrency() -> None:
 def test_publishing_run_config_rejects_upper_bound_max_concurrency() -> None:
     with pytest.raises(ValidationError):
         PublishingRunConfig(max_concurrency=17)
+
+
+def test_publishing_run_config_rejects_inverted_stage_window() -> None:
+    with pytest.raises(ValidationError):
+        PublishingRunConfig(from_stage="proofread", to_stage="revision")

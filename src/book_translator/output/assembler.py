@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from book_translator.models import Chapter, Chunk, TranslationResult
+from book_translator.models import Chapter, Chunk, PublishingChapterArtifact, TranslationResult
 
 
 def assemble_output_text(
@@ -28,3 +28,12 @@ def assemble_output_text(
                 parts.append(f"[[翻译失败: {chapter.title} / chunk {chunk.chunk_index}]]")
         parts.append("")
     return "\n\n".join(part.strip() for part in parts if part is not None).strip() + "\n"
+
+
+def assemble_publishing_output_text(chapters: list[PublishingChapterArtifact]) -> str:
+    parts: list[str] = []
+    for chapter in sorted(chapters, key=lambda item: item.chapter_index):
+        parts.append(chapter.title)
+        parts.append(chapter.text.strip())
+        parts.append("")
+    return "\n\n".join(part for part in parts if part).strip() + "\n"

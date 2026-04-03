@@ -77,3 +77,17 @@ def test_publishing_workspace_uses_method_stage_over_dict_stage(tmp_path: Path) 
         fingerprint="abc123",
         status="ready",
     )
+
+
+def test_publishing_workspace_detects_stale_stage_fingerprint(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "book")
+    workspace.write_publishing_stage_state(
+        "revision",
+        {
+            "fingerprint": "old-fingerprint",
+            "status": "complete",
+        },
+    )
+
+    assert workspace.stage_is_stale("revision", upstream_fingerprint="new-fingerprint")
+    assert not workspace.stage_is_stale("revision", upstream_fingerprint="old-fingerprint")
