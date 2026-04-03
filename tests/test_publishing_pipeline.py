@@ -348,6 +348,10 @@ async def test_rebuild_stable_publishing_outputs_routes_primary_and_extra_format
         calls.append("build_pdf")
         return DummyPrintableBook()
 
+    def fake_build_printable_book_from_structured_book(**kwargs):
+        calls.append("build_pdf_structured")
+        return DummyPrintableBook()
+
     def fake_render_polished_pdf(book, path, *, edition_label):
         calls.append("render_pdf")
         path.write_bytes(b"pdf")
@@ -363,6 +367,10 @@ async def test_rebuild_stable_publishing_outputs_routes_primary_and_extra_format
     monkeypatch.setattr(
         "book_translator.publishing.pipeline.build_printable_book_from_artifacts",
         fake_build_printable_book_from_artifacts,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.build_printable_book_from_structured_book",
+        fake_build_printable_book_from_structured_book,
     )
     monkeypatch.setattr(
         "book_translator.publishing.pipeline.render_polished_pdf",
@@ -390,7 +398,8 @@ async def test_rebuild_stable_publishing_outputs_routes_primary_and_extra_format
     assert (workspace / "publishing" / "final" / "translated.epub").exists() == expect_epub
     assert ("render_pdf" in calls) == expect_pdf
     assert ("render_epub" in calls) == expect_epub
-    assert ("build_pdf" in calls) == expect_pdf
+    assert ("build_pdf_structured" in calls) == (expect_pdf and expect_epub)
+    assert ("build_pdf" in calls) == (expect_pdf and not expect_epub)
     assert ("enrich" in calls) == expect_pdf
 
 

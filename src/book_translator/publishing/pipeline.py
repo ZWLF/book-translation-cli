@@ -30,6 +30,7 @@ from book_translator.output.assembler import (
 from book_translator.output.epub_renderer import render_structured_epub
 from book_translator.output.polished_pdf import (
     build_printable_book_from_artifacts,
+    build_printable_book_from_structured_book,
     render_polished_pdf,
 )
 from book_translator.output.title_enrichment import enrich_missing_titles
@@ -976,15 +977,25 @@ async def _rebuild_stable_publishing_outputs(
         chapters=deep_review_chapters or chapters
     )
     if should_render_pdf:
-        printable_book = build_printable_book_from_artifacts(
-            manifest=manifest,
-            summary={
-                "estimated_cost_usd": summary_metrics["estimated_cost_usd"],
-            },
-            chapters=deep_review_chapters or chapters,
-            title_overrides=workspace.read_title_translations(),
-            deep_review_decisions=deep_review_decisions,
-        )
+        if deep_review_book is not None:
+            printable_book = build_printable_book_from_structured_book(
+                manifest=manifest,
+                summary={
+                    "estimated_cost_usd": summary_metrics["estimated_cost_usd"],
+                },
+                book=deep_review_book,
+                title_overrides=workspace.read_title_translations(),
+            )
+        else:
+            printable_book = build_printable_book_from_artifacts(
+                manifest=manifest,
+                summary={
+                    "estimated_cost_usd": summary_metrics["estimated_cost_usd"],
+                },
+                chapters=deep_review_chapters or chapters,
+                title_overrides=workspace.read_title_translations(),
+                deep_review_decisions=deep_review_decisions,
+            )
         api_key: str | None = None
         try:
             api_key = config.resolved_api_key() if provider is None else None
