@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field, field_validator
 class StyleProfile(BaseModel):
     name: str = Field(min_length=1)
     voice: str = Field(min_length=1)
-    sentence_rules: list[str] = Field(default_factory=list, min_length=1)
-    prohibited_patterns: list[str] = Field(default_factory=list, min_length=1)
+    sentence_rules: list[str] = Field(min_length=1)
+    prohibited_patterns: list[str] = Field(min_length=1)
 
     @field_validator("name", "voice")
     @classmethod

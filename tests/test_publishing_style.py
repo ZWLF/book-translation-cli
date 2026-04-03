@@ -37,6 +37,15 @@ def test_style_profile_rejects_empty_fields(payload: dict[str, object], field_na
     assert field_name in str(exc_info.value)
 
 
+def test_style_profile_requires_rule_lists_when_omitted() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        StyleProfile(name="style", voice="voice")
+
+    message = str(exc_info.value)
+    assert "sentence_rules" in message
+    assert "prohibited_patterns" in message
+
+
 def test_build_draft_request_keeps_style_context_consistent() -> None:
     profile = get_style_profile("non-fiction-publishing")
 
