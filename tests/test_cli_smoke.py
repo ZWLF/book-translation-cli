@@ -25,4 +25,5 @@ def test_publishing_command_shows_help() -> None:
 
     assert result.exit_code == 0
     assert "Publishing workflows" in result.stdout
-    assert "Usage: book-translator publishing" in result.stdout
+    assert "--from-stage" in result.stdout
+    assert "--to-stage" in result.stdout
