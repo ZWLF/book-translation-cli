@@ -97,6 +97,11 @@ class PublishingRunConfig(RunConfig):
     )
     mode: Literal["publishing"] = "publishing"
     max_concurrency: int = Field(default=3, ge=1, le=16)
+    also_pdf: bool = False
+    also_epub: bool = False
+    audit_depth: Literal["standard", "consensus"] = "consensus"
+    enable_cross_review: bool = True
+    image_policy: Literal["extract-or-preserve-caption"] = "extract-or-preserve-caption"
 
     @model_validator(mode="after")
     def validate_stage_window(self) -> PublishingRunConfig:
@@ -115,9 +120,38 @@ class PublishingRunConfig(RunConfig):
             "manual_toc_path": str(self.manual_toc_path) if self.manual_toc_path else None,
             "style": self.style,
             "mode": self.mode,
+            "also_pdf": self.also_pdf,
+            "also_epub": self.also_epub,
+            "audit_depth": self.audit_depth,
+            "enable_cross_review": self.enable_cross_review,
+            "image_policy": self.image_policy,
         }
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()
+
+
+class PublishingOutputSelection(BaseModel):
+    primary_output: Literal["pdf", "epub"]
+    additional_outputs: list[Literal["pdf", "epub"]] = []
+
+
+def resolve_publishing_outputs(
+    source_path: Path,
+    config: PublishingRunConfig,
+) -> PublishingOutputSelection:
+    suffix = source_path.suffix.lower()
+    if suffix == ".pdf":
+        primary_output = "pdf"
+        additional_outputs = ["epub"] if config.also_epub else []
+    elif suffix == ".epub":
+        primary_output = "epub"
+        additional_outputs = ["pdf"] if config.also_pdf else []
+    else:
+        raise ValueError(f"Unsupported publishing source format: {source_path}")
+    return PublishingOutputSelection(
+        primary_output=primary_output,
+        additional_outputs=additional_outputs,
+    )
 
 
 def _read_dotenv_value(path: Path, key: str) -> str | None:

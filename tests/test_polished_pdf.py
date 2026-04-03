@@ -2,7 +2,16 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from book_translator.models import Chunk, Manifest, PublishingChapterArtifact, TranslationResult
+from book_translator.models import (
+    Chunk,
+    Manifest,
+    PublishingAsset,
+    PublishingBlock,
+    PublishingChapterArtifact,
+    StructuredPublishingBook,
+    StructuredPublishingChapter,
+    TranslationResult,
+)
 from book_translator.output.polished_pdf import (
     PrintableBlock,
     PrintableBook,
@@ -10,7 +19,9 @@ from book_translator.output.polished_pdf import (
     _parse_title_and_author,
     build_printable_book,
     build_printable_book_from_artifacts,
+    build_printable_book_from_structured_book,
     render_polished_pdf,
+    render_polished_pdf_from_structured_book,
     running_header_texts,
 )
 from book_translator.publishing.layout_review import generate_layout_annotations
@@ -1100,6 +1111,264 @@ def test_render_polished_pdf_writes_pdf_file(tmp_path: Path) -> None:
     assert output_path.exists()
     assert output_path.read_bytes().startswith(b"%PDF")
     assert output_path.stat().st_size > 0
+
+
+def test_build_printable_book_from_structured_book_keeps_separate_ordered_items() -> None:
+    structured_book = StructuredPublishingBook(
+        title="Publishing EPUB",
+        chapters=[
+            StructuredPublishingChapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                source_title="Chapter 1",
+                translated_title="第一章：开始",
+                blocks=[
+                    PublishingBlock(
+                        block_id="chapter-1-block-1",
+                        kind="paragraph",
+                        text="Opening paragraph.",
+                        order_index=1,
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-2",
+                        kind="ordered_item",
+                        text="第一条原则。",
+                        order_index=2,
+                        source_anchor="1. First principle.",
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-3",
+                        kind="ordered_item",
+                        text="第二条原则。",
+                        order_index=3,
+                        source_anchor="2. Second principle.",
+                    ),
+                ],
+                assets=[
+                    PublishingAsset(
+                        source_asset_id="asset-1",
+                        caption="Falcon launch",
+                        status="caption-only",
+                    )
+                ],
+            )
+        ],
+    )
+
+    book = build_printable_book_from_structured_book(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        book=structured_book,
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == [
+        "paragraph",
+        "numbered_item",
+        "numbered_item",
+        "caption",
+    ]
+    assert chapter.blocks[1].text == "第一条原则。"
+    assert chapter.blocks[2].text == "第二条原则。"
+    assert chapter.blocks[3].text == "Falcon launch"
+
+
+def test_render_polished_pdf_from_structured_book_preserves_caption_only_fallback(
+    tmp_path: Path,
+) -> None:
+    structured_book = StructuredPublishingBook(
+        title="Publishing EPUB",
+        chapters=[
+            StructuredPublishingChapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                source_title="Chapter 1",
+                translated_title="第一章：开始",
+                blocks=[
+                    PublishingBlock(
+                        block_id="chapter-1-block-1",
+                        kind="paragraph",
+                        text="Opening paragraph.",
+                        order_index=1,
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-2",
+                        kind="ordered_item",
+                        text="第一条原则。",
+                        order_index=2,
+                        source_anchor="1. First principle.",
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-3",
+                        kind="ordered_item",
+                        text="第二条原则。",
+                        order_index=3,
+                        source_anchor="2. Second principle.",
+                    ),
+                ],
+                assets=[
+                    PublishingAsset(
+                        source_asset_id="asset-1",
+                        caption="Falcon launch",
+                        status="caption-only",
+                    )
+                ],
+            )
+        ],
+    )
+    output_path = tmp_path / "structured.pdf"
+
+    render_polished_pdf_from_structured_book(
+        structured_book,
+        output_path,
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+    )
+
+    reader = PdfReader(str(output_path))
+    extracted = "\n".join((page.extract_text() or "") for page in reader.pages)
+    assert "第一条原则。" in extracted
+    assert "第二条原则。" in extracted
+    assert "Falcon launch" in extracted
+    assert output_path.exists()
+    assert output_path.read_bytes().startswith(b"%PDF")
+
+
+def test_build_printable_book_from_structured_book_keeps_ordered_items_and_caption() -> None:
+    structured_book = StructuredPublishingBook(
+        title="Publishing EPUB",
+        chapters=[
+            StructuredPublishingChapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                source_title="Chapter 1",
+                translated_title="Chapter 1: Start",
+                blocks=[
+                    PublishingBlock(
+                        block_id="chapter-1-block-1",
+                        kind="paragraph",
+                        text="Opening paragraph.",
+                        order_index=1,
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-2",
+                        kind="ordered_item",
+                        text="First principle.",
+                        order_index=2,
+                        source_anchor="1. First principle.",
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-3",
+                        kind="ordered_item",
+                        text="Second principle.",
+                        order_index=3,
+                        source_anchor="2. Second principle.",
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-image-1",
+                        kind="image",
+                        text="",
+                        order_index=4,
+                    ),
+                ],
+                assets=[
+                    PublishingAsset(
+                        source_asset_id="asset-1",
+                        block_anchor_id="chapter-1-image-1",
+                        caption="Falcon launch",
+                        status="caption-only",
+                    )
+                ],
+            )
+        ],
+    )
+
+    book = build_printable_book_from_structured_book(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        book=structured_book,
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == [
+        "paragraph",
+        "numbered_item",
+        "numbered_item",
+        "caption",
+    ]
+    assert chapter.blocks[1].text == "First principle."
+    assert chapter.blocks[2].text == "Second principle."
+    assert chapter.blocks[3].text == "Falcon launch"
+
+
+def test_render_polished_pdf_from_structured_book_keeps_ordered_items_and_caption(
+    tmp_path: Path,
+) -> None:
+    structured_book = StructuredPublishingBook(
+        title="Publishing EPUB",
+        chapters=[
+            StructuredPublishingChapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                source_title="Chapter 1",
+                translated_title="Chapter 1: Start",
+                blocks=[
+                    PublishingBlock(
+                        block_id="chapter-1-block-1",
+                        kind="paragraph",
+                        text="Opening paragraph.",
+                        order_index=1,
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-2",
+                        kind="ordered_item",
+                        text="First principle.",
+                        order_index=2,
+                        source_anchor="1. First principle.",
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-3",
+                        kind="ordered_item",
+                        text="Second principle.",
+                        order_index=3,
+                        source_anchor="2. Second principle.",
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-image-1",
+                        kind="image",
+                        text="",
+                        order_index=4,
+                    ),
+                ],
+                assets=[
+                    PublishingAsset(
+                        source_asset_id="asset-1",
+                        block_anchor_id="chapter-1-image-1",
+                        caption="Falcon launch",
+                        status="caption-only",
+                    )
+                ],
+            )
+        ],
+    )
+    output_path = tmp_path / "structured.pdf"
+
+    render_polished_pdf_from_structured_book(
+        structured_book,
+        output_path,
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+    )
+
+    reader = PdfReader(str(output_path))
+    extracted = "\n".join((page.extract_text() or "") for page in reader.pages)
+    first_index = extracted.index("First principle.")
+    second_index = extracted.index("Second principle.")
+    caption_index = extracted.index("Falcon launch")
+    assert first_index < second_index < caption_index
+    assert extracted.count("Falcon launch") == 1
+    assert output_path.exists()
+    assert output_path.read_bytes().startswith(b"%PDF")
 
 
 def test_render_polished_pdf_hides_running_headers_on_toc_pages(tmp_path: Path) -> None:

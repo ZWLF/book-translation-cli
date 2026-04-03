@@ -34,6 +34,8 @@ class Workspace:
         self.publishing_proofread_dir = self.publishing_root_path / "proofread"
         self.publishing_final_dir = self.publishing_root_path / "final"
         self.publishing_deep_review_dir = self.publishing_root_path / "deep_review"
+        self.publishing_audit_dir = self.publishing_root_path / "audit"
+        self.publishing_assets_dir = self.publishing_root_path / "assets"
         self.publishing_draft_chapters_path = self.publishing_draft_dir / "chapters.jsonl"
         self.publishing_draft_text_path = self.publishing_draft_dir / "draft.txt"
         self.publishing_glossary_path = self.publishing_lexicon_dir / "glossary.json"
@@ -51,6 +53,7 @@ class Workspace:
         self.publishing_final_chapters_path = self.publishing_final_dir / "final_chapters.jsonl"
         self.publishing_final_text_path = self.publishing_final_dir / "translated.txt"
         self.publishing_final_pdf_path = self.publishing_final_dir / "translated.pdf"
+        self.publishing_final_epub_path = self.publishing_final_dir / "translated.epub"
         self.publishing_deep_review_findings_path = (
             self.publishing_deep_review_dir / "findings.jsonl"
         )
@@ -65,6 +68,12 @@ class Workspace:
         self.publishing_qa_root_path = self.publishing_root_path / "qa"
         self.publishing_qa_pages_path = self.publishing_qa_root_path / "pages"
         self.publishing_qa_summary_path = self.publishing_qa_root_path / "qa_summary.json"
+        self.publishing_audit_source_path = self.publishing_audit_dir / "source_audit.jsonl"
+        self.publishing_audit_review_path = self.publishing_audit_dir / "review_audit.jsonl"
+        self.publishing_audit_consensus_path = self.publishing_audit_dir / "consensus.json"
+        self.publishing_audit_report_path = self.publishing_audit_dir / "final_audit_report.json"
+        self.publishing_assets_manifest_path = self.publishing_assets_dir / "manifest.json"
+        self.publishing_assets_images_dir = self.publishing_assets_dir / "images"
 
     def initialize(self, manifest: Manifest) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -212,6 +221,10 @@ class Workspace:
                 self.publishing_deep_review_findings_path,
                 self.publishing_deep_review_chapters_path,
                 self.publishing_deep_review_decisions_path,
+                self.publishing_audit_source_path,
+                self.publishing_audit_review_path,
+                self.publishing_audit_consensus_path,
+                self.publishing_audit_report_path,
             ],
         }
         for path in stage_paths.get(stage, []):

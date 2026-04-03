@@ -69,6 +69,18 @@ book-translator --input ./books --output ./out --provider gemini --resume
 book-translator publishing --input ./books --output ./out --provider openai --model gpt-4o-mini
 ```
 
+Default output follows the source format:
+
+- `PDF` input writes `publishing/final/translated.pdf`
+- `EPUB` input writes `publishing/final/translated.epub`
+
+Cross-format output is explicit:
+
+```bash
+book-translator publishing --input ./books/book.pdf --output ./out --also-epub
+book-translator publishing --input ./books/book.epub --output ./out --also-pdf
+```
+
 To resume only the later editorial stages:
 
 ```bash
@@ -148,6 +160,13 @@ Additional artifacts when `--to-stage deep-review` runs:
 - `publishing/deep_review/findings.jsonl`
 - `publishing/deep_review/revised_chapters.jsonl`
 - `publishing/deep_review/decisions.json`
+- `publishing/audit/source_audit.jsonl`
+- `publishing/audit/review_audit.jsonl`
+- `publishing/audit/consensus.json`
+- `publishing/audit/final_audit_report.json`
+- `publishing/assets/manifest.json`
+- `publishing/assets/images/*`
+- `publishing/final/translated.epub` when `EPUB` is the primary output or `--also-epub` is used
 
 ## CLI Options
 
@@ -173,6 +192,11 @@ Additional artifacts when `--to-stage deep-review` runs:
 - `--style`: publishing style profile, currently `non-fiction-publishing`
 - `--from-stage`: `draft`, `lexicon`, `revision`, `proofread`, `final-review`, or `deep-review`
 - `--to-stage`: stop after a specific publishing stage
+- `--also-pdf`: add a PDF output when the source format defaults to EPUB
+- `--also-epub`: add an EPUB output when the source format defaults to PDF
+- `--audit-depth`: `standard` or `consensus`
+- `--enable-cross-review/--no-cross-review`: enable or disable the audit/review arbitration loop
+- `--image-policy`: currently `extract-or-preserve-caption`
 
 Publishing stage semantics:
 
@@ -181,7 +205,7 @@ Publishing stage semantics:
 - `revision`: chapter-level revision against the lexicon
 - `proofread`: independent proofreading pass with notes
 - `final-review`: whole-book consistency pass plus final text/PDF output
-- `deep-review`: source-aware acceptance pass that emits findings/revised chapters and then rebuilds the final text/PDF
+- `deep-review`: source-aware acceptance pass that emits findings/revised chapters, audit artifacts, and then rebuilds the final text/PDF/EPUB according to the selected outputs
 
 ## Validation
 

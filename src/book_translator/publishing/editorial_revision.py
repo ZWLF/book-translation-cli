@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import re
 
-from book_translator.models import PublishingAuditFinding
+from book_translator.models import (
+    PublishingAuditFinding,
+    PublishingBlock,
+    StructuredPublishingChapter,
+)
 
 _INLINE_NUMBERED_MARKER_RE = re.compile(r"(?<!\d)(\d{1,3})[.)]\s*")
 _BLOCK_NUMBERED_LINE_RE = re.compile(r"^\s*(\d{1,3})[.)]\s+\S")
@@ -18,6 +22,34 @@ def apply_editorial_repairs(
     if _should_restore_numbered_list(findings):
         revised = _restore_numbered_list_blocks(chapter_text=revised, source_text=source_text)
     return normalize_editorial_spacing(revised)
+
+
+def apply_structured_editorial_repairs(
+    *,
+    chapter: StructuredPublishingChapter,
+    findings: list[PublishingAuditFinding],
+) -> StructuredPublishingChapter:
+    repaired_blocks = [
+        _repair_structured_block(block, findings=findings)
+        for block in chapter.blocks
+    ]
+    return chapter.model_copy(
+        update={
+            "blocks": [
+                block for block in repaired_blocks if block.text.strip() or block.kind == "image"
+            ]
+        }
+    )
+
+
+def _repair_structured_block(
+    block: PublishingBlock,
+    *,
+    findings: list[PublishingAuditFinding],
+) -> PublishingBlock:
+    if block.kind == "ordered_item":
+        return block.model_copy(update={"text": normalize_editorial_spacing(block.text)})
+    return block.model_copy(update={"text": normalize_editorial_spacing(block.text)})
 
 
 def normalize_editorial_spacing(text: str) -> str:

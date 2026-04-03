@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from book_translator.models import PublishingAuditFinding, PublishingChapterArtifact
+from book_translator.models import (
+    Chapter,
+    PublishingAuditFinding,
+    PublishingBlock,
+    PublishingChapterArtifact,
+    StructuredPublishingBook,
+    StructuredPublishingChapter,
+)
+from book_translator.output.assembler import assemble_structured_publishing_output_text
+from book_translator.publishing.deep_review import run_deep_review
 from book_translator.publishing.editorial_revision import apply_editorial_repairs
 from book_translator.publishing.layout_review import generate_layout_annotations
 
@@ -211,3 +220,212 @@ def test_generate_layout_annotations_qa_anchor_stops_before_follow_up_paragraph(
 
 def test_task3_does_not_expand_publishing_chapter_artifact_schema() -> None:
     assert "layout_annotations" not in PublishingChapterArtifact.model_fields
+
+
+def test_run_deep_review_builds_structured_book_and_audit_report() -> None:
+    source_chapters = [
+        Chapter(
+            chapter_id="chapter-1",
+            chapter_index=0,
+            title="Chapter 1",
+            text="Core methods:\n1. First principle.\n2. Second principle.\n3. Third principle.",
+        )
+    ]
+    final_artifacts = [
+        PublishingChapterArtifact(
+            chapter_id="chapter-1",
+            chapter_index=0,
+            title="Chapter 1",
+            text=(
+                "核心方法：\n\n"
+                "1. 第一条原则。 2. 第二条原则。 3. 第三条原则。"
+            ),
+        )
+    ]
+
+    result = run_deep_review(source_chapters=source_chapters, final_artifacts=final_artifacts)
+
+    assert isinstance(result.structured_book, StructuredPublishingBook)
+    assert result.findings
+    assert result.repair_passes == 1
+    assert result.confirmation_passes == 1
+    assert result.final_report["source_finding_count"] >= 1
+    assert result.final_report["confirmation_finding_count"] >= 0
+    assert any(
+        block.kind == "ordered_item"
+        for block in result.structured_book.chapters[0].blocks
+    )
+    assert "1. 第一条原则。" in result.revised_chapters[0].text
+    assert "2. 第二条原则。" in result.revised_chapters[0].text
+
+
+def test_assemble_structured_publishing_output_text_preserves_ordered_items() -> None:
+    book = StructuredPublishingBook(
+        title="Sample Book",
+        chapters=[
+            StructuredPublishingChapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                source_title="Chapter 1",
+                translated_title="Chapter 1",
+                blocks=[
+                    PublishingBlock(
+                        block_id="chapter-1-block-1",
+                        kind="paragraph",
+                        text="Intro paragraph.",
+                        order_index=1,
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-2",
+                        kind="ordered_item",
+                        text="第一条原则。",
+                        order_index=2,
+                        source_anchor="1. First principle.",
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-3",
+                        kind="ordered_item",
+                        text="第二条原则。",
+                        order_index=3,
+                        source_anchor="2. Second principle.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    output = assemble_structured_publishing_output_text(book)
+
+    assert "Chapter 1" in output
+    assert "Intro paragraph." in output
+    assert "1. 第一条原则。" in output
+    assert "2. 第二条原则。" in output
+
+
+def test_assemble_structured_publishing_output_text_uses_translated_ordered_item_text() -> None:
+    book = StructuredPublishingBook(
+        title="Sample Book",
+        chapters=[
+            StructuredPublishingChapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                source_title="Chapter 1",
+                translated_title="第一章",
+                blocks=[
+                    PublishingBlock(
+                        block_id="chapter-1-block-1",
+                        kind="ordered_item",
+                        text="第一条原则。",
+                        order_index=1,
+                        source_anchor="1. First principle.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    output = assemble_structured_publishing_output_text(book)
+
+    assert "1. 第一条原则。" in output
+    assert "First principle" not in output
+
+
+def test_run_deep_review_flags_missing_source_chapter() -> None:
+    result = run_deep_review(
+        source_chapters=[],
+        final_artifacts=[
+            PublishingChapterArtifact(
+                chapter_id="chapter-missing",
+                chapter_index=0,
+                title="Missing",
+                text="Unmapped translated content.",
+            )
+        ],
+    )
+
+    assert result.findings
+    assert result.findings[0].finding_type == "missing_source_chapter"
+    assert result.final_report["unresolved_count"] >= 1
+
+
+def test_run_deep_review_standard_mode_skips_review_findings() -> None:
+    result = run_deep_review(
+        source_chapters=[
+            Chapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                title="Chapter 1",
+                text="1. First.\n2. Second.\n3. Third.",
+            )
+        ],
+        final_artifacts=[
+            PublishingChapterArtifact(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                title="Chapter 1",
+                text="1. First. 2. Second. 3. Third.",
+            )
+        ],
+        audit_depth="standard",
+    )
+
+    assert result.review_findings == []
+    assert result.final_report["audit_depth"] == "standard"
+    assert result.final_report["review_finding_count"] == 0
+
+
+def test_run_deep_review_disables_cross_review_when_requested() -> None:
+    result = run_deep_review(
+        source_chapters=[
+            Chapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                title="Chapter 1",
+                text="1. First.\n2. Second.\n3. Third.",
+            )
+        ],
+        final_artifacts=[
+            PublishingChapterArtifact(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                title="Chapter 1",
+                text="1. First. 2. Second. 3. Third.",
+            )
+        ],
+        enable_cross_review=False,
+    )
+
+    assert result.review_findings == []
+    assert result.final_report["cross_review_enabled"] is False
+
+
+def test_assemble_structured_publishing_output_text_keeps_qa_blocks_tight() -> None:
+    book = StructuredPublishingBook(
+        title="Sample Book",
+        chapters=[
+            StructuredPublishingChapter(
+                chapter_id="chapter-qa",
+                chapter_index=0,
+                source_title="Q&A",
+                translated_title="闂€佺瓟",
+                blocks=[
+                    PublishingBlock(
+                        block_id="chapter-qa-block-1",
+                        kind="qa_question",
+                        text="Q: Why now?",
+                        order_index=1,
+                    ),
+                    PublishingBlock(
+                        block_id="chapter-qa-block-2",
+                        kind="qa_answer",
+                        text="A: Because the window is open.",
+                        order_index=2,
+                    ),
+                ],
+            )
+        ],
+    )
+
+    output = assemble_structured_publishing_output_text(book)
+
+    assert "Q: Why now?\nA: Because the window is open." in output

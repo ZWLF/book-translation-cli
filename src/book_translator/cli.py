@@ -36,6 +36,32 @@ console = Console()
 DEFAULT_OUTPUT_PATH = Path("out")
 
 
+def _supports_spinner(target_console: Console) -> bool:
+    encoding = getattr(target_console, "encoding", None) or "utf-8"
+    try:
+        "⠙".encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return False
+    return True
+
+
+def _build_progress(*, description: str, total: int) -> tuple[Progress, int]:
+    columns = []
+    if _supports_spinner(console):
+        columns.append(SpinnerColumn())
+    columns.extend(
+        [
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+        ]
+    )
+    progress = Progress(*columns, console=console)
+    task_id = progress.add_task(description, total=total)
+    return progress, task_id
+
+
 def _run_async_sync(awaitable):
     try:
         asyncio.get_running_loop()
@@ -137,6 +163,16 @@ def publishing(
     style: Annotated[str, typer.Option("--style")] = "non-fiction-publishing",
     from_stage: Annotated[str, typer.Option("--from-stage")] = "draft",
     to_stage: Annotated[str, typer.Option("--to-stage")] = "final-review",
+    also_pdf: Annotated[bool, typer.Option("--also-pdf")] = False,
+    also_epub: Annotated[bool, typer.Option("--also-epub")] = False,
+    audit_depth: Annotated[str, typer.Option("--audit-depth")] = "consensus",
+    enable_cross_review: Annotated[
+        bool,
+        typer.Option("--enable-cross-review/--no-cross-review"),
+    ] = True,
+    image_policy: Annotated[str, typer.Option("--image-policy")] = (
+        "extract-or-preserve-caption"
+    ),
 ) -> None:
     """Publishing workflows."""
     if ctx.invoked_subcommand is not None:
@@ -163,6 +199,11 @@ def publishing(
         style=style,
         from_stage=from_stage,
         to_stage=to_stage,
+        also_pdf=also_pdf,
+        also_epub=also_epub,
+        audit_depth=audit_depth,
+        enable_cross_review=enable_cross_review,
+        image_policy=image_policy,
     )
     asyncio.run(_run_publishing_cli(input_path=input_path, output_path=output_path, config=config))
 
@@ -178,15 +219,11 @@ async def _run_publishing_cli(
         raise typer.BadParameter(f"No supported .pdf or .epub files found under {input_path}.")
 
     output_path.mkdir(parents=True, exist_ok=True)
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task_id = progress.add_task("Processing publishing books", total=len(books))
+    progress, task_id = _build_progress(
+        description="Processing publishing books",
+        total=len(books),
+    )
+    with progress:
         for book in books:
             summary = await process_book_publishing(
                 input_path=book,
@@ -225,15 +262,8 @@ async def _run_cli(*, input_path: Path, output_path: Path, config: RunConfig) ->
         raise typer.BadParameter(f"No supported .pdf or .epub files found under {input_path}.")
 
     output_path.mkdir(parents=True, exist_ok=True)
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task_id = progress.add_task("Processing books", total=len(books))
+    progress, task_id = _build_progress(description="Processing books", total=len(books))
+    with progress:
         for book in books:
             summary = await process_book(input_path=book, output_root=output_path, config=config)
             progress.advance(task_id)

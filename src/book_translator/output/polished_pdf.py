@@ -9,8 +9,12 @@ from xml.sax.saxutils import escape as xml_escape
 from book_translator.models import (
     Chunk,
     Manifest,
+    PublishingAsset,
+    PublishingBlock,
     PublishingChapterArtifact,
     PublishingLayoutAnnotation,
+    StructuredPublishingBook,
+    StructuredPublishingChapter,
     TranslationResult,
 )
 
@@ -125,6 +129,168 @@ def build_printable_book_from_artifacts(
         author=author,
         title_overrides=title_overrides or {},
     )
+
+
+def build_printable_book_from_structured_book(
+    *,
+    manifest: Manifest,
+    summary: dict[str, Any],
+    book: StructuredPublishingBook,
+    title_overrides: dict[str, str] | None = None,
+) -> PrintableBook:
+    title_en, author = _parse_title_and_author(_source_stem(manifest.source_path))
+    chapters: list[PrintableChapter] = []
+    title_overrides = title_overrides or {}
+
+    for structured_chapter in sorted(book.chapters, key=lambda item: item.chapter_index):
+        printable_blocks = _printable_blocks_from_structured_chapter(structured_chapter)
+        if not printable_blocks:
+            continue
+
+        source_title = (
+            structured_chapter.source_title
+            or structured_chapter.translated_title
+            or ""
+        ).strip()
+        resolved_title_zh = _preferred_chapter_title_zh(
+            source_title,
+            title_overrides.get(structured_chapter.chapter_id)
+            or structured_chapter.translated_title
+            or None,
+        )
+
+        chapters.append(
+            PrintableChapter(
+                chapter_id=structured_chapter.chapter_id,
+                chapter_index=structured_chapter.chapter_index,
+                source_title=source_title,
+                title_kind=_classify_title_kind(source_title, resolved_title_zh),
+                title_en=source_title,
+                title_zh=resolved_title_zh,
+                header_title=_build_header_title(source_title, resolved_title_zh),
+                toc_label_html=_build_toc_label_html(source_title, resolved_title_zh),
+                blocks=printable_blocks,
+            )
+        )
+
+    return PrintableBook(
+        book_id=manifest.book_id,
+        title_en=title_en,
+        title_zh=book.title.strip() or None,
+        author=author,
+        source_path=manifest.source_path,
+        provider=manifest.provider,
+        model=manifest.model,
+        estimated_cost_usd=_as_float(summary.get("estimated_cost_usd")),
+        chapters=chapters,
+    )
+
+
+def render_polished_pdf_from_structured_book(
+    book: StructuredPublishingBook,
+    output_path: Path,
+    *,
+    manifest: Manifest,
+    summary: dict[str, Any],
+    title_overrides: dict[str, str] | None = None,
+    edition_label: str = "engineering",
+) -> None:
+    printable_book = build_printable_book_from_structured_book(
+        manifest=manifest,
+        summary=summary,
+        book=book,
+        title_overrides=title_overrides,
+    )
+    render_polished_pdf(
+        printable_book,
+        output_path,
+        edition_label=edition_label,
+    )
+
+
+def _printable_blocks_from_structured_chapter(
+    chapter: StructuredPublishingChapter,
+) -> list[PrintableBlock]:
+    caption_block_ids = {
+        block.block_id for block in chapter.blocks if block.kind == "caption"
+    }
+    surfaced_caption_anchor_ids: set[str] = set()
+    caption_text_keys = {
+        _normalize_key(block.text)
+        for block in chapter.blocks
+        if block.kind == "caption"
+    }
+    assets_by_anchor = {
+        asset.block_anchor_id: asset
+        for asset in chapter.assets
+        if asset.block_anchor_id
+    }
+
+    printable_blocks: list[PrintableBlock] = []
+    for block in sorted(chapter.blocks, key=lambda item: item.order_index):
+        printable_block = _convert_structured_block_to_printable(
+            block,
+            assets_by_anchor=assets_by_anchor,
+            caption_block_ids=caption_block_ids,
+            caption_text_keys=caption_text_keys,
+            surfaced_caption_anchor_ids=surfaced_caption_anchor_ids,
+        )
+        if printable_block is not None:
+            printable_blocks.append(printable_block)
+
+    for asset in chapter.assets:
+        if asset.status != "caption-only" or not asset.caption:
+            continue
+        if asset.block_anchor_id and asset.block_anchor_id in surfaced_caption_anchor_ids:
+            continue
+        if asset.block_anchor_id and asset.block_anchor_id in caption_block_ids:
+            continue
+        if _normalize_key(asset.caption) in caption_text_keys:
+            continue
+        printable_blocks.append(PrintableBlock(kind="caption", text=asset.caption.strip()))
+
+    return printable_blocks
+
+
+def _convert_structured_block_to_printable(
+    block: PublishingBlock,
+    *,
+    assets_by_anchor: dict[str, PublishingAsset],
+    caption_block_ids: set[str],
+    caption_text_keys: set[str],
+    surfaced_caption_anchor_ids: set[str],
+) -> PrintableBlock | None:
+    text = block.text.strip()
+    if block.kind == "ordered_item":
+        return PrintableBlock(kind="numbered_item", text=text)
+    if block.kind == "unordered_item":
+        return PrintableBlock(kind="paragraph", text=text)
+    if block.kind == "heading":
+        return PrintableBlock(kind="section_heading", text=text)
+    if block.kind == "reference_entry":
+        return PrintableBlock(kind="reference", text=text)
+    if block.kind in {
+        "paragraph",
+        "qa_question",
+        "qa_answer",
+        "callout",
+        "quote",
+        "caption",
+    }:
+        return PrintableBlock(kind=block.kind, text=text)
+    if block.kind == "image":
+        asset = assets_by_anchor.get(block.block_id)
+        if asset and asset.status == "caption-only" and asset.caption:
+            if block.block_id in caption_block_ids:
+                return None
+            if _normalize_key(asset.caption) in caption_text_keys:
+                return None
+            surfaced_caption_anchor_ids.add(block.block_id)
+            return PrintableBlock(kind="caption", text=asset.caption.strip())
+        if text:
+            return PrintableBlock(kind="paragraph", text=text)
+        return None
+    return PrintableBlock(kind="paragraph", text=text) if text else None
 
 
 def _build_printable_book_from_entries(
@@ -916,6 +1082,14 @@ def _normalize_annotation_match_text(text: str) -> str:
     compact = re.sub(r"\s+", " ", text).strip()
     compact = compact.replace("“", "").replace("”", "").replace('"', "")
     return _tighten_mixed_text_spacing(compact).replace(" ", "")
+
+
+def _normalize_key(text: str) -> str:
+    return "".join(
+        character
+        for character in text.lower()
+        if character.isalnum() or "\u4e00" <= character <= "\u9fff"
+    )
 
 
 def _annotation_signals_qa_structure(payload: dict[str, str | int | bool]) -> bool:

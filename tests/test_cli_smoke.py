@@ -1,6 +1,6 @@
 from typer.testing import CliRunner
 
-from book_translator.cli import app
+from book_translator.cli import _supports_spinner, app
 
 
 def test_cli_shows_help() -> None:
@@ -25,3 +25,17 @@ def test_publishing_command_shows_help() -> None:
 
     assert result.exit_code == 0
     assert "Publishing workflows" in result.stdout
+
+
+def test_supports_spinner_rejects_gbk_console() -> None:
+    class DummyConsole:
+        encoding = "gbk"
+
+    assert _supports_spinner(DummyConsole()) is False
+
+
+def test_supports_spinner_accepts_utf8_console() -> None:
+    class DummyConsole:
+        encoding = "utf-8"
+
+    assert _supports_spinner(DummyConsole()) is True

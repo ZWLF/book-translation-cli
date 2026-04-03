@@ -14,11 +14,16 @@ def test_publishing_workspace_exposes_artifact_paths(tmp_path: Path) -> None:
 
     assert workspace.publishing_root_path == workspace.root / "publishing"
     assert workspace.publishing_state_dir == workspace.publishing_root_path / "state"
+    assert workspace.publishing_audit_dir == workspace.publishing_root_path / "audit"
+    assert workspace.publishing_assets_dir == workspace.publishing_root_path / "assets"
     assert workspace.publishing_draft_text_path == (
         workspace.publishing_root_path / "draft" / "draft.txt"
     )
     assert workspace.publishing_final_pdf_path == (
         workspace.publishing_root_path / "final" / "translated.pdf"
+    )
+    assert workspace.publishing_final_epub_path == (
+        workspace.publishing_root_path / "final" / "translated.epub"
     )
     assert workspace.publishing_deep_review_findings_path == (
         workspace.publishing_root_path / "deep_review" / "findings.jsonl"
@@ -28,6 +33,24 @@ def test_publishing_workspace_exposes_artifact_paths(tmp_path: Path) -> None:
     )
     assert workspace.publishing_deep_review_decisions_path == (
         workspace.publishing_root_path / "deep_review" / "decisions.json"
+    )
+    assert workspace.publishing_audit_source_path == (
+        workspace.publishing_audit_dir / "source_audit.jsonl"
+    )
+    assert workspace.publishing_audit_review_path == (
+        workspace.publishing_audit_dir / "review_audit.jsonl"
+    )
+    assert workspace.publishing_audit_consensus_path == (
+        workspace.publishing_audit_dir / "consensus.json"
+    )
+    assert workspace.publishing_audit_report_path == (
+        workspace.publishing_audit_dir / "final_audit_report.json"
+    )
+    assert workspace.publishing_assets_manifest_path == (
+        workspace.publishing_assets_dir / "manifest.json"
+    )
+    assert workspace.publishing_assets_images_dir == (
+        workspace.publishing_assets_dir / "images"
     )
 
     artifact = PublishingChapterArtifact(
@@ -60,6 +83,10 @@ def test_publishing_workspace_exposes_artifact_paths(tmp_path: Path) -> None:
         "target_excerpt": "Translated term",
         "reason": "Terminology mismatch with glossary.",
         "auto_fixable": True,
+        "agent_role": "audit",
+        "block_id": None,
+        "confidence": 0.5,
+        "source_signature": None,
     }
 
     annotation = PublishingLayoutAnnotation(

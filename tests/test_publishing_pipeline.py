@@ -3,14 +3,32 @@ from pathlib import Path
 
 import pytest
 from ebooklib import epub
+from reportlab.pdfgen import canvas
+from typer.testing import CliRunner
 
-from book_translator.config import PublishingRunConfig
-from book_translator.models import PublishingChapterArtifact
+from book_translator.cli import app
+from book_translator.config import (
+    PublishingOutputSelection,
+    PublishingRunConfig,
+    resolve_publishing_outputs,
+)
+from book_translator.models import (
+    Manifest,
+    PublishingBlock,
+    PublishingChapterArtifact,
+    StructuredPublishingBook,
+    StructuredPublishingChapter,
+)
 from book_translator.providers.base import BaseProvider
 from book_translator.publishing.final_review import apply_final_review
-from book_translator.publishing.pipeline import process_book_publishing
+from book_translator.publishing.pipeline import (
+    _rebuild_stable_publishing_outputs,
+    process_book_publishing,
+)
 from book_translator.publishing.proofread import proofread_chapter
 from book_translator.publishing.revision import revise_chapter
+
+runner = CliRunner()
 
 
 class FakeProvider(BaseProvider):
@@ -49,6 +67,105 @@ def _build_sample_epub(path: Path) -> None:
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     epub.write_epub(str(path), book)
+
+
+def _build_sample_pdf(path: Path) -> None:
+    pdf = canvas.Canvas(str(path))
+    pdf.drawString(72, 760, "Chapter 1")
+    pdf.drawString(72, 736, "Hello world.")
+    pdf.showPage()
+    pdf.drawString(72, 760, "Chapter 2")
+    pdf.drawString(72, 736, "Goodbye world.")
+    pdf.save()
+
+
+def test_publishing_run_config_includes_new_defaults() -> None:
+    config = PublishingRunConfig()
+
+    assert config.also_pdf is False
+    assert config.also_epub is False
+    assert config.audit_depth == "consensus"
+    assert config.enable_cross_review is True
+    assert config.image_policy == "extract-or-preserve-caption"
+
+
+def test_resolve_publishing_outputs_defaults_to_source_format() -> None:
+    pdf_config = PublishingRunConfig()
+    epub_config = PublishingRunConfig()
+
+    assert resolve_publishing_outputs(Path("sample.pdf"), pdf_config) == PublishingOutputSelection(
+        primary_output="pdf",
+        additional_outputs=[],
+    )
+    assert resolve_publishing_outputs(
+        Path("sample.epub"),
+        epub_config,
+    ) == PublishingOutputSelection(primary_output="epub", additional_outputs=[])
+
+
+def test_resolve_publishing_outputs_adds_cross_format_extra() -> None:
+    pdf_selection = resolve_publishing_outputs(
+        Path("sample.pdf"),
+        PublishingRunConfig(also_epub=True),
+    )
+    epub_selection = resolve_publishing_outputs(
+        Path("sample.epub"),
+        PublishingRunConfig(also_pdf=True),
+    )
+
+    assert pdf_selection == PublishingOutputSelection(
+        primary_output="pdf",
+        additional_outputs=["epub"],
+    )
+    assert epub_selection == PublishingOutputSelection(
+        primary_output="epub",
+        additional_outputs=["pdf"],
+    )
+
+
+def test_publishing_cli_passes_new_flags_into_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "sample.epub"
+    output_path = tmp_path / "out"
+    _build_sample_epub(input_path)
+    captured: dict[str, object] = {}
+
+    async def fake_run_publishing_cli(*, input_path, output_path, config):
+        captured["input_path"] = input_path
+        captured["output_path"] = output_path
+        captured["config"] = config
+
+    monkeypatch.setattr("book_translator.cli._run_publishing_cli", fake_run_publishing_cli)
+
+    result = runner.invoke(
+        app,
+        [
+            "publishing",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--also-pdf",
+            "--audit-depth",
+            "standard",
+            "--no-cross-review",
+            "--image-policy",
+            "extract-or-preserve-caption",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert captured["input_path"] == input_path
+    assert captured["output_path"] == output_path
+    config = captured["config"]
+    assert isinstance(config, PublishingRunConfig)
+    assert config.also_pdf is True
+    assert config.also_epub is False
+    assert config.audit_depth == "standard"
+    assert config.enable_cross_review is False
+    assert config.image_policy == "extract-or-preserve-caption"
 
 
 def test_revise_chapter_returns_artifact_and_applies_lexicon() -> None:
@@ -115,9 +232,12 @@ async def test_process_book_publishing_writes_stage_artifacts(tmp_path: Path) ->
     assert (book_dir / "draft" / "chapters.jsonl").exists()
     assert (book_dir / "lexicon" / "glossary.json").exists()
     assert (book_dir / "final" / "translated.txt").exists()
-    assert (book_dir / "final" / "translated.pdf").exists()
+    assert (book_dir / "final" / "translated.epub").exists()
+    assert not (book_dir / "final" / "translated.pdf").exists()
     assert (book_dir / "editorial_log.json").exists()
     assert summary["mode"] == "publishing"
+    assert summary["render_pdf"] is False
+    assert summary["render_epub"] is True
 
 
 @pytest.mark.asyncio
@@ -146,6 +266,141 @@ async def test_process_book_publishing_from_stage_revision_skips_draft_and_lexic
     )
 
     assert summary["started_stage"] == "revision"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_name", "also_pdf", "also_epub", "expect_pdf", "expect_epub"),
+    [
+        ("sample.pdf", False, False, True, False),
+        ("sample.pdf", False, True, True, True),
+        ("sample.epub", False, False, False, True),
+        ("sample.epub", True, False, True, True),
+    ],
+)
+async def test_rebuild_stable_publishing_outputs_routes_primary_and_extra_formats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_name: str,
+    also_pdf: bool,
+    also_epub: bool,
+    expect_pdf: bool,
+    expect_epub: bool,
+) -> None:
+    workspace = tmp_path / "book"
+    workspace.mkdir()
+    from book_translator.state.workspace import Workspace
+
+    book_workspace = Workspace(workspace)
+    manifest = Manifest(
+        book_id="book",
+        source_path=str(tmp_path / source_name),
+        source_fingerprint="fingerprint",
+        provider="openai",
+        model="gpt-4o-mini",
+        config_fingerprint="config",
+    )
+    chapters = [
+        PublishingChapterArtifact(
+            chapter_id="chapter-1",
+            chapter_index=0,
+            title="Chapter 1",
+            text="Hello world.",
+        )
+    ]
+    structured_book = StructuredPublishingBook(
+        title="Publishing EPUB",
+        chapters=[
+            StructuredPublishingChapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                source_title="Chapter 1",
+                translated_title="第一章：开始",
+                blocks=[
+                    PublishingBlock(
+                        block_id="chapter-1-block-1",
+                        kind="paragraph",
+                        text="Hello world.",
+                        order_index=1,
+                    )
+                ],
+                assets=[],
+            )
+        ],
+    )
+    config = PublishingRunConfig(
+        provider="openai",
+        model="gpt-4o-mini",
+        also_pdf=also_pdf,
+        also_epub=also_epub,
+    )
+    summary_metrics = {"estimated_cost_usd": 0.0}
+    calls: list[str] = []
+
+    class DummyPrintableBook:
+        author = "ZWLF"
+
+    async def fake_enrich_missing_titles(*, book, **kwargs):
+        calls.append("enrich")
+        return book
+
+    def fake_build_printable_book_from_artifacts(**kwargs):
+        calls.append("build_pdf")
+        return DummyPrintableBook()
+
+    def fake_build_printable_book_from_structured_book(**kwargs):
+        calls.append("build_pdf_structured")
+        return DummyPrintableBook()
+
+    def fake_render_polished_pdf(book, path, *, edition_label):
+        calls.append("render_pdf")
+        path.write_bytes(b"pdf")
+
+    def fake_render_structured_epub(book, path, **kwargs):
+        calls.append("render_epub")
+        path.write_bytes(b"epub")
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.enrich_missing_titles",
+        fake_enrich_missing_titles,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.build_printable_book_from_artifacts",
+        fake_build_printable_book_from_artifacts,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.build_printable_book_from_structured_book",
+        fake_build_printable_book_from_structured_book,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.render_polished_pdf",
+        fake_render_polished_pdf,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.render_structured_epub",
+        fake_render_structured_epub,
+    )
+
+    await _rebuild_stable_publishing_outputs(
+        workspace=book_workspace,
+        manifest=manifest,
+        chapters=chapters,
+        config=config,
+        provider=FakeProvider(),
+        summary_metrics=summary_metrics,
+        deep_review_book=structured_book if expect_epub else None,
+        deep_review_chapters=chapters,
+        deep_review_decisions={},
+    )
+
+    assert (workspace / "publishing" / "final" / "translated.txt").exists()
+    assert (workspace / "publishing" / "final" / "translated.pdf").exists() == expect_pdf
+    assert (workspace / "publishing" / "final" / "translated.epub").exists() == expect_epub
+    assert ("render_pdf" in calls) == expect_pdf
+    assert ("render_epub" in calls) == expect_epub
+    assert ("build_pdf_structured" in calls) == (expect_pdf and expect_epub)
+    assert ("build_pdf" in calls) == (expect_pdf and not expect_epub)
+    assert ("enrich" in calls) == expect_pdf
 
 
 def test_proofread_chapter_normalizes_spacing_and_emits_notes() -> None:
@@ -265,7 +520,7 @@ async def test_process_book_publishing_runs_deep_review_and_rebuilds_final_text(
     input_path = tmp_path / "deep-review.epub"
     _build_numbered_list_epub(input_path)
 
-    await process_book_publishing(
+    summary = await process_book_publishing(
         input_path=input_path,
         output_root=tmp_path / "out",
         config=PublishingRunConfig(
@@ -292,12 +547,31 @@ async def test_process_book_publishing_runs_deep_review_and_rebuilds_final_text(
 
     book_dir = tmp_path / "out" / "deep-review" / "publishing"
     final_text = (book_dir / "final" / "translated.txt").read_text(encoding="utf-8")
+    deep_review_rows = [
+        json.loads(line)
+        for line in (book_dir / "deep_review" / "revised_chapters.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
 
     assert summary["completed_stage"] == "deep-review"
     assert (book_dir / "deep_review" / "findings.jsonl").exists()
     assert (book_dir / "deep_review" / "revised_chapters.jsonl").exists()
     assert (book_dir / "deep_review" / "decisions.json").exists()
-    assert "核心方法\n\n1. 第一条原则。\n2. 第二条原则。\n3. 第三条原则。" in final_text
+    assert (book_dir / "audit" / "source_audit.jsonl").exists()
+    assert (book_dir / "audit" / "review_audit.jsonl").exists()
+    assert (book_dir / "audit" / "consensus.json").exists()
+    assert (book_dir / "audit" / "final_audit_report.json").exists()
+    assert "译文::核心方法" in final_text
+    assert "1. 第一条原则。" in final_text
+    assert "2. 第二条原则。" in final_text
+    assert "3. 第三条原则。" in final_text
+    assert "First principle." not in final_text
+    assert deep_review_rows
+    assert "blocks" in deep_review_rows[0]
+
+
 @pytest.mark.asyncio
 async def test_process_book_publishing_resume_from_revision_keeps_lexicon_decisions(
     tmp_path: Path,
@@ -401,8 +675,8 @@ async def test_process_book_publishing_rebuilds_pdf_when_title_translations_chan
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_path = tmp_path / "sample.epub"
-    _build_sample_epub(input_path)
+    input_path = tmp_path / "sample.pdf"
+    _build_sample_pdf(input_path)
 
     async def fake_enrich_missing_titles(**kwargs):
         return kwargs["book"]
@@ -584,7 +858,11 @@ async def test_process_book_publishing_reports_only_changed_deep_review_chapters
         provider=FailIfCalledProvider(),
     )
 
+    final_chapters_rows = final_chapters_path.read_text(encoding="utf-8")
+
     assert summary["deep_review_revised_chapters"] == 1
+    assert "Draft  text with double spaces." not in final_chapters_rows
+    assert "Draft text with double spaces." in final_chapters_rows
 
 
 @pytest.mark.asyncio
@@ -592,8 +870,8 @@ async def test_deep_review_rerun_preserves_last_good_final_outputs_on_render_fai
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_path = tmp_path / "sample.epub"
-    _build_sample_epub(input_path)
+    input_path = tmp_path / "sample.pdf"
+    _build_sample_pdf(input_path)
 
     async def fake_enrich_missing_titles(**kwargs):
         return kwargs["book"]
