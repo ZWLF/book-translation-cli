@@ -130,46 +130,62 @@ def _build_printable_book_from_entries(
         title_block_checked = False
         printable_blocks: list[PrintableBlock] = []
 
-        for lines in raw_blocks:
-            reference_entries = _extract_reference_entries(lines)
-            if reference_entries:
-                title_block_checked = True
-                printable_blocks.extend(
-                    PrintableBlock(kind="reference", text=entry) for entry in reference_entries
-                )
-                continue
-
-            cleaned_lines = _clean_block_lines(lines)
-            if not cleaned_lines:
-                continue
-
-            if title_zh is None and _is_book_title(cleaned_lines[0]):
-                title_zh = cleaned_lines[0]
-                cleaned_lines = cleaned_lines[1:]
-                if not cleaned_lines:
-                    continue
-
-            if not title_block_checked:
-                chapter_title_zh, cleaned_lines = _extract_chapter_title_zh(cleaned_lines)
-                title_block_checked = True
-                if not cleaned_lines:
-                    continue
-
-            if len(cleaned_lines) == 1 and _looks_like_section_heading(cleaned_lines[0]):
-                printable_blocks.append(
-                    PrintableBlock(
-                        kind="section_heading",
-                        text=_tighten_mixed_text_spacing(cleaned_lines[0]),
+        for raw_lines in raw_blocks:
+            for lines in _split_semantic_lines(raw_lines):
+                reference_entries = _extract_reference_entries(lines)
+                if reference_entries:
+                    title_block_checked = True
+                    printable_blocks.extend(
+                        PrintableBlock(kind="reference", text=entry) for entry in reference_entries
                     )
-                )
-                continue
+                    continue
 
-            printable_blocks.append(
-                PrintableBlock(
-                    kind="paragraph",
-                    text=_tighten_mixed_text_spacing("".join(cleaned_lines)),
+                content_lines, citation_numbers = _extract_trailing_citation_numbers(lines)
+                cleaned_lines = _clean_block_lines(
+                    content_lines,
+                    preserve_leading_number=bool(content_lines)
+                    and re.fullmatch(r"\d+", content_lines[0]) is not None,
                 )
-            )
+                if not cleaned_lines:
+                    continue
+
+                if title_zh is None and _is_book_title(cleaned_lines[0]):
+                    title_zh = cleaned_lines[0]
+                    cleaned_lines = cleaned_lines[1:]
+                    if not cleaned_lines:
+                        continue
+
+                if not title_block_checked:
+                    chapter_title_zh, cleaned_lines = _extract_chapter_title_zh(cleaned_lines)
+                    title_block_checked = True
+                    if not cleaned_lines:
+                        continue
+
+                block_text = _build_block_text(cleaned_lines, citation_numbers)
+
+                if _looks_like_callout(cleaned_lines, citation_numbers):
+                    printable_blocks.append(
+                        PrintableBlock(
+                            kind="callout",
+                            text=block_text,
+                        )
+                    )
+                    continue
+
+                if len(cleaned_lines) == 1 and _looks_like_section_heading(cleaned_lines[0]):
+                    printable_blocks.append(
+                        PrintableBlock(
+                            kind="section_heading",
+                            text=(
+                                block_text
+                                if citation_numbers
+                                else _tighten_mixed_text_spacing(cleaned_lines[0])
+                            ),
+                        )
+                    )
+                    continue
+
+                printable_blocks.append(PrintableBlock(kind="paragraph", text=block_text))
 
         if not printable_blocks:
             continue
@@ -228,6 +244,8 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
             PageTemplate,
             Paragraph,
             Spacer,
+            Table,
+            TableStyle,
         )
         from reportlab.platypus.tableofcontents import TableOfContents
     except ImportError as exc:
@@ -251,8 +269,11 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
         "ink": colors.HexColor("#222222"),
         "muted": colors.HexColor("#6B6259"),
         "accent": colors.HexColor("#8C5A2B"),
+        "citation": colors.HexColor("#2F5BD2"),
+        "callout_bg": colors.HexColor("#ECE9E4"),
         "line": colors.HexColor("#D8CCBF"),
     }
+    text_block_width = page_width - margins["left"] - margins["right"]
 
     story: list[Any] = []
 
@@ -388,6 +409,17 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
         alignment=TA_LEFT,
         wordWrap="CJK",
     )
+    callout_style = ParagraphStyle(
+        "CalloutZh",
+        parent=body_style,
+        alignment=TA_LEFT,
+        fontSize=10.9,
+        leading=17.6,
+        firstLineIndent=0,
+        leftIndent=0,
+        rightIndent=0,
+        spaceAfter=0,
+    )
     reference_style = ParagraphStyle(
         "ReferenceZh",
         parent=styles["BodyText"],
@@ -484,11 +516,31 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
         for block in chapter.blocks:
             if block.kind == "section_heading":
                 story.append(Paragraph(block.text, section_heading_style))
+            elif block.kind == "callout":
+                story.append(
+                    Table(
+                        [[Paragraph(block.text, callout_style)]],
+                        colWidths=[text_block_width],
+                        style=TableStyle(
+                            [
+                                ("BACKGROUND", (0, 0), (-1, -1), palette["callout_bg"]),
+                                ("BOX", (0, 0), (-1, -1), 0, palette["callout_bg"]),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                            ]
+                        ),
+                        hAlign="LEFT",
+                    )
+                )
+                story.append(Spacer(1, 2.2 * mm))
             elif block.kind == "reference":
                 story.append(Paragraph(block.text, reference_style))
             else:
+                plain_text = _strip_inline_markup(block.text)
                 paragraph_style = (
-                    body_mixed_style if _has_mixed_script_content(block.text) else body_style
+                    body_mixed_style if _has_mixed_script_content(plain_text) else body_style
                 )
                 story.append(Paragraph(block.text, paragraph_style))
 
@@ -627,10 +679,10 @@ def _split_raw_blocks(text: str) -> list[list[str]]:
     return blocks
 
 
-def _clean_block_lines(lines: list[str]) -> list[str]:
+def _clean_block_lines(lines: list[str], *, preserve_leading_number: bool = False) -> list[str]:
     cleaned: list[str] = []
-    for line in lines:
-        value = _normalize_line(line)
+    for index, line in enumerate(lines):
+        value = _normalize_line(line, keep_number_line=preserve_leading_number and index == 0)
         if not value:
             continue
         cleaned.append(value)
@@ -681,6 +733,17 @@ def _build_toc_label_html(title_en: str, title_zh: str | None) -> str:
     )
 
 
+def _build_block_text(lines: list[str], citation_numbers: list[str]) -> str:
+    text = xml_escape(_tighten_mixed_text_spacing(_combine_flow_lines(lines)))
+    if not citation_numbers:
+        return text
+    citation_markup = "".join(
+        f"<font color='#2F5BD2' size='6.8'><super>{xml_escape(number)}</super></font>"
+        for number in citation_numbers
+    )
+    return f"{text}{citation_markup}"
+
+
 def _tighten_mixed_text_spacing(text: str) -> str:
     value = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9@#&])", "", text)
     value = re.sub(r"(?<=[A-Za-z0-9@#&])\s+(?=[\u4e00-\u9fff])", "", value)
@@ -693,6 +756,65 @@ def _tighten_mixed_text_spacing(text: str) -> str:
 
 def _has_mixed_script_content(text: str) -> bool:
     return _contains_chinese(text) and bool(re.search(r"[A-Za-z0-9]", text))
+
+
+def _combine_flow_lines(lines: list[str]) -> str:
+    if not lines:
+        return ""
+    combined = lines[0]
+    for line in lines[1:]:
+        if re.search(r"[A-Za-z0-9]$", combined) and re.match(r"[A-Za-z0-9]", line):
+            combined += f" {line}"
+        else:
+            combined += line
+    return combined
+
+
+def _strip_inline_markup(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text)
+
+
+def _extract_trailing_citation_numbers(lines: list[str]) -> tuple[list[str], list[str]]:
+    normalized = [
+        value
+        for line in lines
+        if (value := _normalize_line(line, keep_number_line=True))
+    ]
+    citation_numbers: list[str] = []
+    while normalized and re.fullmatch(r"\d+", normalized[-1]):
+        citation_numbers.insert(0, normalized.pop())
+    return normalized, citation_numbers
+
+
+def _split_semantic_lines(lines: list[str]) -> list[list[str]]:
+    normalized = [
+        value
+        for line in lines
+        if (value := _normalize_line(line, keep_number_line=True))
+    ]
+    if not normalized:
+        return []
+    if re.fullmatch(r"\d+", normalized[0]):
+        return [normalized]
+
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for value in normalized:
+        if re.fullmatch(r"\d+", value):
+            if current and re.fullmatch(r"\d+", current[0]):
+                blocks.append(current)
+                current = [value]
+                continue
+            if current:
+                current.append(value)
+                blocks.append(current)
+                current = []
+                continue
+        current.append(value)
+
+    if current:
+        blocks.append(current)
+    return blocks
 
 
 def _extract_reference_entries(lines: list[str]) -> list[str]:
@@ -755,6 +877,19 @@ def _looks_like_section_heading(text: str) -> bool:
     if text.isupper() and len(text) <= 80:
         return True
     return False
+
+
+def _looks_like_callout(lines: list[str], citation_numbers: list[str]) -> bool:
+    if not citation_numbers:
+        return False
+    candidate = _tighten_mixed_text_spacing(_combine_flow_lines(lines)).strip()
+    if not candidate or len(candidate) > 54:
+        return False
+    if candidate.startswith(("Q:", "A:", "问：", "答：")):
+        return False
+    if _looks_like_chapter_heading(candidate) or _is_book_title(candidate):
+        return False
+    return True
 
 
 def _is_book_title(text: str) -> bool:
