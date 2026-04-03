@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel
-
 from book_translator.models import (
     Chunk,
     Manifest,
@@ -133,15 +131,12 @@ class Workspace:
     def write_publishing_stage_state(
         self,
         stage: str,
-        payload: PublishingStageState | BaseModel | dict[str, object],
+        payload: PublishingStageState | dict[str, object],
     ) -> None:
         self.publishing_state_dir.mkdir(parents=True, exist_ok=True)
-        if isinstance(payload, BaseModel):
-            data = payload.model_dump()
-        else:
-            data = payload
+        data = self._normalize_publishing_stage_state(stage=stage, payload=payload)
         self.publishing_state_dir.joinpath(f"{stage}.json").write_text(
-            json.dumps(data, indent=2, ensure_ascii=False),
+            data.model_dump_json(indent=2),
             encoding="utf-8",
         )
 
@@ -150,3 +145,13 @@ class Workspace:
         if not state_path.exists():
             return None
         return PublishingStageState.model_validate_json(state_path.read_text(encoding="utf-8"))
+
+    def _normalize_publishing_stage_state(
+        self,
+        *,
+        stage: str,
+        payload: PublishingStageState | dict[str, object],
+    ) -> PublishingStageState:
+        if isinstance(payload, PublishingStageState):
+            return payload.model_copy(update={"stage": stage})
+        return PublishingStageState.model_validate({"stage": stage, **payload})
