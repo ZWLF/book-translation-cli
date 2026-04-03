@@ -3,7 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from book_translator.models import Chunk, Manifest, TranslationResult
+from pydantic import BaseModel
+
+from book_translator.models import (
+    Chunk,
+    Manifest,
+    PublishingStageState,
+    TranslationResult,
+)
 
 
 class Workspace:
@@ -20,6 +27,10 @@ class Workspace:
         self.qa_root_path = self.root / "qa"
         self.qa_pages_path = self.qa_root_path / "pages"
         self.qa_summary_path = self.qa_root_path / "qa_summary.json"
+        self.publishing_root_path = self.root / "publishing"
+        self.publishing_state_dir = self.publishing_root_path / "state"
+        self.publishing_draft_text_path = self.publishing_root_path / "draft" / "draft.txt"
+        self.publishing_final_pdf_path = self.publishing_root_path / "final" / "translated.pdf"
 
     def initialize(self, manifest: Manifest) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -118,3 +129,24 @@ class Workspace:
             json.dumps(translations, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+
+    def write_publishing_stage_state(
+        self,
+        stage: str,
+        payload: PublishingStageState | BaseModel | dict[str, object],
+    ) -> None:
+        self.publishing_state_dir.mkdir(parents=True, exist_ok=True)
+        if isinstance(payload, BaseModel):
+            data = payload.model_dump()
+        else:
+            data = payload
+        self.publishing_state_dir.joinpath(f"{stage}.json").write_text(
+            json.dumps(data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def read_publishing_stage_state(self, stage: str) -> PublishingStageState | None:
+        state_path = self.publishing_state_dir / f"{stage}.json"
+        if not state_path.exists():
+            return None
+        return PublishingStageState.model_validate_json(state_path.read_text(encoding="utf-8"))

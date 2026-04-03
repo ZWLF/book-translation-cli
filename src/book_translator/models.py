@@ -88,3 +88,16 @@ class BookRunSummary(BaseModel):
     estimated_cost_usd: float
     duration_seconds: float
     avg_chunk_latency_ms: float
+
+
+class PublishingStageState(BaseModel):
+    stage: str
+    fingerprint: str
+    status: str
+
+
+class PublishingChapterArtifact(BaseModel):
+    chapter_id: str
+    chapter_index: int
+    title: str
+    text: str
