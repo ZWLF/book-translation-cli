@@ -43,3 +43,10 @@ def test_publishing_run_config_rejects_upper_bound_max_concurrency() -> None:
 def test_publishing_run_config_rejects_inverted_stage_window() -> None:
     with pytest.raises(ValidationError):
         PublishingRunConfig(from_stage="proofread", to_stage="revision")
+
+
+def test_publishing_run_config_allows_final_review_to_deep_review() -> None:
+    config = PublishingRunConfig(from_stage="final-review", to_stage="deep-review")
+
+    assert config.from_stage == "final-review"
+    assert config.to_stage == "deep-review"

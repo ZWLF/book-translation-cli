@@ -33,6 +33,7 @@ class Workspace:
         self.publishing_revision_dir = self.publishing_root_path / "revision"
         self.publishing_proofread_dir = self.publishing_root_path / "proofread"
         self.publishing_final_dir = self.publishing_root_path / "final"
+        self.publishing_deep_review_dir = self.publishing_root_path / "deep_review"
         self.publishing_draft_chapters_path = self.publishing_draft_dir / "chapters.jsonl"
         self.publishing_draft_text_path = self.publishing_draft_dir / "draft.txt"
         self.publishing_glossary_path = self.publishing_lexicon_dir / "glossary.json"
@@ -50,6 +51,15 @@ class Workspace:
         self.publishing_final_chapters_path = self.publishing_final_dir / "final_chapters.jsonl"
         self.publishing_final_text_path = self.publishing_final_dir / "translated.txt"
         self.publishing_final_pdf_path = self.publishing_final_dir / "translated.pdf"
+        self.publishing_deep_review_findings_path = (
+            self.publishing_deep_review_dir / "findings.jsonl"
+        )
+        self.publishing_deep_review_chapters_path = (
+            self.publishing_deep_review_dir / "revised_chapters.jsonl"
+        )
+        self.publishing_deep_review_decisions_path = (
+            self.publishing_deep_review_dir / "decisions.json"
+        )
         self.publishing_editorial_log_path = self.publishing_root_path / "editorial_log.json"
         self.publishing_summary_path = self.publishing_root_path / "run_summary.json"
         self.publishing_qa_root_path = self.publishing_root_path / "qa"
@@ -199,6 +209,13 @@ class Workspace:
                 self.publishing_final_text_path,
                 self.publishing_final_pdf_path,
                 self.publishing_editorial_log_path,
+            ],
+            "deep-review": [
+                self.publishing_deep_review_findings_path,
+                self.publishing_deep_review_chapters_path,
+                self.publishing_deep_review_decisions_path,
+                self.publishing_final_text_path,
+                self.publishing_final_pdf_path,
             ],
         }
         for path in stage_paths.get(stage, []):

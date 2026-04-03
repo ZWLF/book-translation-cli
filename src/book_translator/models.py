@@ -101,3 +101,18 @@ class PublishingChapterArtifact(BaseModel):
     chapter_index: int
     title: str
     text: str
+
+
+class PublishingAuditFinding(BaseModel):
+    chapter_id: str
+    finding_type: str
+    severity: str
+    source_excerpt: str
+    target_excerpt: str
+    reason: str
+    auto_fixable: bool = False
+
+
+class PublishingLayoutAnnotation(BaseModel):
+    kind: str
+    payload: dict[str, str | int | bool] = Field(default_factory=dict)
