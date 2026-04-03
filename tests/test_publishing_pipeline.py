@@ -210,10 +210,12 @@ async def test_process_book_publishing_writes_stage_artifacts(tmp_path: Path) ->
     book_dir = tmp_path / "out" / "sample" / "publishing"
     assert (book_dir / "draft" / "draft.txt").exists()
     assert (book_dir / "draft" / "chapters.jsonl").exists()
+    assert (book_dir / "assets" / "manifest.json").exists()
     assert (book_dir / "lexicon" / "glossary.json").exists()
     assert (book_dir / "final" / "translated.txt").exists()
     assert (book_dir / "final" / "translated.pdf").exists()
     assert (book_dir / "editorial_log.json").exists()
+    assert summary["asset_count"] == 0
     assert summary["mode"] == "publishing"
 
 

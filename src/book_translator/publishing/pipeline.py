@@ -23,6 +23,7 @@ from book_translator.output.polished_pdf import (
 from book_translator.output.title_enrichment import enrich_missing_titles
 from book_translator.pipeline import _build_provider, _extract_book, _load_mapping
 from book_translator.providers.base import BaseProvider
+from book_translator.publishing.assets import extract_source_assets, write_asset_manifest
 from book_translator.publishing.deep_review import (
     DEEP_REVIEW_STAGE_VERSION,
     run_deep_review,
@@ -68,6 +69,14 @@ async def process_book_publishing(
     _initialize_publishing_manifest(workspace=workspace, manifest=manifest, config=config)
 
     extracted = _extract_book(input_path)
+    source_assets = extract_source_assets(
+        source_path=input_path,
+        output_dir=workspace.publishing_assets_images_dir,
+    )
+    write_asset_manifest(
+        assets=source_assets,
+        manifest_path=workspace.publishing_assets_manifest_path,
+    )
     manual_titles = (
         load_manual_toc_titles(config.manual_toc_path)
         if config.manual_toc_path and config.chapter_strategy == "manual"
@@ -193,6 +202,11 @@ async def process_book_publishing(
                 deep_review_decisions.get("chapters", [])
                 if isinstance(deep_review_decisions, dict)
                 else []
+            ),
+            "asset_count": len(source_assets),
+            "extracted_asset_count": sum(asset.status == "extracted" for asset in source_assets),
+            "caption_only_asset_count": sum(
+                asset.status == "caption-only" for asset in source_assets
             ),
         }
         workspace.write_publishing_summary(summary)
