@@ -511,6 +511,265 @@ def test_build_printable_book_from_artifacts_keeps_numeric_leading_body_blocks()
     assert chapter.blocks[0].text == "2024 was the hardest year."
 
 
+def test_build_printable_book_from_artifacts_uses_deep_review_callout_annotations() -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-1",
+        chapter_index=0,
+        title="Chapter One",
+        text="\n".join(
+            [
+                '有人提醒过我：“Life is too short for long-term grudges.”',
+                "",
+                "然后正文继续展开。",
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+        deep_review_decisions={
+            "chapters": [
+                {
+                    "chapter_id": "chapter-1",
+                    "annotations": [
+                        {
+                            "kind": "callout",
+                            "payload": {"text": "Life is too short for long-term grudges."},
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["callout", "paragraph"]
+    assert chapter.blocks[0].text == "Life is too short for long-term grudges."
+    assert chapter.blocks[1].text == "然后正文继续展开。"
+
+
+def test_build_printable_book_from_artifacts_uses_deep_review_qa_annotations() -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-qa",
+        chapter_index=0,
+        title="Chapter QA",
+        text="\n".join(
+            [
+                "Q: 为什么是现在？",
+                "A: 因为窗口已经打开了。",
+                "",
+                "这是后续说明。",
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+        deep_review_decisions={
+            "chapters": [
+                {
+                    "chapter_id": "chapter-qa",
+                    "annotations": [
+                        {
+                            "kind": "qa_block",
+                            "payload": {
+                                "anchor": "Q: 为什么是现在？\nA: 因为窗口已经打开了。",
+                                "has_question_marker": True,
+                                "has_answer_marker": True,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["qa_question", "qa_answer", "paragraph"]
+    assert chapter.blocks[0].text == "Q: 为什么是现在？"
+    assert chapter.blocks[1].text == "A: 因为窗口已经打开了。"
+    assert chapter.blocks[2].text == "这是后续说明。"
+
+
+def test_build_printable_book_from_artifacts_uses_marker_dropped_deep_review_qa_annotations(
+) -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-qa-markerless",
+        chapter_index=0,
+        title="Chapter QA Markerless",
+        text="\n".join(
+            [
+                "为什么是现在？",
+                "因为窗口已经打开了。",
+                "",
+                "这是后续说明。",
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+        deep_review_decisions={
+            "chapters": [
+                {
+                    "chapter_id": "chapter-qa-markerless",
+                    "annotations": [
+                        {
+                            "kind": "qa_block",
+                            "payload": {
+                                "anchor": "为什么是现在？\n因为窗口已经打开了。",
+                                "has_question_marker": False,
+                                "has_answer_marker": False,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["qa_question", "qa_answer", "paragraph"]
+    assert chapter.blocks[0].text == "为什么是现在？"
+    assert chapter.blocks[1].text == "因为窗口已经打开了。"
+    assert chapter.blocks[2].text == "这是后续说明。"
+
+
+def test_build_printable_book_from_artifacts_uses_single_line_markerless_qa_anchor() -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-qa-compact",
+        chapter_index=0,
+        title="Chapter QA Compact",
+        text="\n".join(
+            [
+                "Why now? Because the window is open.",
+                "",
+                "This is follow-up context.",
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+        deep_review_decisions={
+            "chapters": [
+                {
+                    "chapter_id": "chapter-qa-compact",
+                    "annotations": [
+                        {
+                            "kind": "qa_block",
+                            "payload": {
+                                "anchor": "Why now? Because the window is open.",
+                                "has_question_marker": False,
+                                "has_answer_marker": False,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["qa_question", "qa_answer", "paragraph"]
+    assert chapter.blocks[0].text == "Why now?"
+    assert chapter.blocks[1].text == "Because the window is open."
+    assert chapter.blocks[2].text == "This is follow-up context."
+
+
+def test_build_printable_book_from_artifacts_compact_qa_anchor_does_not_duplicate_trailing_prose(
+) -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-qa-tail",
+        chapter_index=0,
+        title="Chapter QA Tail",
+        text="\n".join(
+            [
+                "Why now? Because the window is open. Afterward.",
+                "",
+                "Afterward.",
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+        deep_review_decisions={
+            "chapters": [
+                {
+                    "chapter_id": "chapter-qa-tail",
+                    "annotations": [
+                        {
+                            "kind": "qa_block",
+                            "payload": {
+                                "anchor": "Why now? Because the window is open. Afterward.",
+                                "has_question_marker": False,
+                                "has_answer_marker": False,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["qa_question", "qa_answer"]
+    assert chapter.blocks[0].text == "Why now?"
+    assert chapter.blocks[1].text == "Because the window is open. Afterward."
+
+
+def test_build_printable_book_from_artifacts_preserves_citation_markup_in_callout_annotations(
+) -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-callout-citation",
+        chapter_index=0,
+        title="Chapter Citation",
+        text="\n".join(
+            [
+                "Instead of fighting during a critical time, I thought it was best to concede.",
+                "I had to focus on keeping the company alive and preserving the team.",
+                "456",
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+        deep_review_decisions={
+            "chapters": [
+                {
+                    "chapter_id": "chapter-callout-citation",
+                    "annotations": [
+                        {
+                            "kind": "callout",
+                            "payload": {"text": "I thought it was best to concede."},
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["callout"]
+    assert "I thought it was best to concede." in chapter.blocks[0].text
+    assert "<super>456</super>" in chapter.blocks[0].text
+    assert "2F5BD2" in chapter.blocks[0].text
+
+
 def test_build_printable_book_treats_short_cited_lines_without_punctuation_as_callouts() -> None:
     chunks = [
         _chunk(

@@ -35,6 +35,8 @@ from book_translator.state.workspace import Workspace
 from book_translator.translation.orchestrator import translate_chunks
 from book_translator.utils import file_fingerprint, slugify
 
+PDF_ANNOTATION_RENDERER_VERSION = "deep-review-pdf-v2"
+
 
 async def process_book_publishing(
     *,
@@ -632,6 +634,7 @@ async def _ensure_deep_review_stage(
         manifest=manifest,
         chapters=final_artifacts,
         deep_review_chapters=result.revised_chapters,
+        deep_review_decisions=result.decisions,
         config=config,
         provider=provider,
         summary_metrics=summary_metrics,
@@ -782,6 +785,7 @@ def _final_review_stage_fingerprint(
             "style": config.style,
             "final_review_stage_version": FINAL_REVIEW_STAGE_VERSION,
             "pdf_front_matter_version": "publishing-edition-v6",
+            "pdf_annotation_renderer_version": PDF_ANNOTATION_RENDERER_VERSION,
             "title_translations_fingerprint": _title_translations_fingerprint(workspace),
         }
     )
@@ -798,8 +802,18 @@ def _deep_review_stage_fingerprint(
             "final_review_stage": final_review_state.model_dump(),
             "style": config.style,
             "deep_review_stage_version": DEEP_REVIEW_STAGE_VERSION,
+            "pdf_annotation_renderer_version": PDF_ANNOTATION_RENDERER_VERSION,
             "title_translations_fingerprint": _title_translations_fingerprint(workspace),
+            "deep_review_decisions_fingerprint": _deep_review_decisions_fingerprint(workspace),
         }
+    )
+
+
+def _deep_review_decisions_fingerprint(workspace: Workspace) -> str:
+    if not workspace.publishing_deep_review_decisions_path.exists():
+        return "missing"
+    return _fingerprint_payload(
+        _load_json_object(workspace.publishing_deep_review_decisions_path)
     )
 
 
@@ -812,6 +826,7 @@ async def _rebuild_stable_publishing_outputs(
     provider: BaseProvider | None,
     summary_metrics: dict[str, float | int],
     deep_review_chapters: list[PublishingChapterArtifact] | None = None,
+    deep_review_decisions: dict[str, object] | None = None,
 ) -> None:
     workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
     workspace.publishing_final_text_path.write_text(
@@ -832,6 +847,7 @@ async def _rebuild_stable_publishing_outputs(
         },
         chapters=deep_review_chapters or chapters,
         title_overrides=workspace.read_title_translations(),
+        deep_review_decisions=deep_review_decisions,
     )
     api_key: str | None = None
     try:
