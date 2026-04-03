@@ -137,6 +137,16 @@ def publishing(
     style: Annotated[str, typer.Option("--style")] = "non-fiction-publishing",
     from_stage: Annotated[str, typer.Option("--from-stage")] = "draft",
     to_stage: Annotated[str, typer.Option("--to-stage")] = "final-review",
+    also_pdf: Annotated[bool, typer.Option("--also-pdf")] = False,
+    also_epub: Annotated[bool, typer.Option("--also-epub")] = False,
+    audit_depth: Annotated[str, typer.Option("--audit-depth")] = "consensus",
+    enable_cross_review: Annotated[
+        bool,
+        typer.Option("--enable-cross-review/--no-cross-review"),
+    ] = True,
+    image_policy: Annotated[str, typer.Option("--image-policy")] = (
+        "extract-or-preserve-caption"
+    ),
 ) -> None:
     """Publishing workflows."""
     if ctx.invoked_subcommand is not None:
@@ -163,6 +173,11 @@ def publishing(
         style=style,
         from_stage=from_stage,
         to_stage=to_stage,
+        also_pdf=also_pdf,
+        also_epub=also_epub,
+        audit_depth=audit_depth,
+        enable_cross_review=enable_cross_review,
+        image_policy=image_policy,
     )
     asyncio.run(_run_publishing_cli(input_path=input_path, output_path=output_path, config=config))
 

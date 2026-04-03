@@ -3,14 +3,22 @@ from pathlib import Path
 
 import pytest
 from ebooklib import epub
+from typer.testing import CliRunner
 
-from book_translator.config import PublishingRunConfig
+from book_translator.cli import app
+from book_translator.config import (
+    PublishingOutputSelection,
+    PublishingRunConfig,
+    resolve_publishing_outputs,
+)
 from book_translator.models import PublishingChapterArtifact
 from book_translator.providers.base import BaseProvider
 from book_translator.publishing.final_review import apply_final_review
 from book_translator.publishing.pipeline import process_book_publishing
 from book_translator.publishing.proofread import proofread_chapter
 from book_translator.publishing.revision import revise_chapter
+
+runner = CliRunner()
 
 
 class FakeProvider(BaseProvider):
@@ -49,6 +57,95 @@ def _build_sample_epub(path: Path) -> None:
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     epub.write_epub(str(path), book)
+
+
+def test_publishing_run_config_includes_new_defaults() -> None:
+    config = PublishingRunConfig()
+
+    assert config.also_pdf is False
+    assert config.also_epub is False
+    assert config.audit_depth == "consensus"
+    assert config.enable_cross_review is True
+    assert config.image_policy == "extract-or-preserve-caption"
+
+
+def test_resolve_publishing_outputs_defaults_to_source_format() -> None:
+    pdf_config = PublishingRunConfig()
+    epub_config = PublishingRunConfig()
+
+    assert resolve_publishing_outputs(Path("sample.pdf"), pdf_config) == PublishingOutputSelection(
+        primary_output="pdf",
+        additional_outputs=[],
+    )
+    assert resolve_publishing_outputs(
+        Path("sample.epub"),
+        epub_config,
+    ) == PublishingOutputSelection(primary_output="epub", additional_outputs=[])
+
+
+def test_resolve_publishing_outputs_adds_cross_format_extra() -> None:
+    pdf_selection = resolve_publishing_outputs(
+        Path("sample.pdf"),
+        PublishingRunConfig(also_epub=True),
+    )
+    epub_selection = resolve_publishing_outputs(
+        Path("sample.epub"),
+        PublishingRunConfig(also_pdf=True),
+    )
+
+    assert pdf_selection == PublishingOutputSelection(
+        primary_output="pdf",
+        additional_outputs=["epub"],
+    )
+    assert epub_selection == PublishingOutputSelection(
+        primary_output="epub",
+        additional_outputs=["pdf"],
+    )
+
+
+def test_publishing_cli_passes_new_flags_into_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "sample.epub"
+    output_path = tmp_path / "out"
+    _build_sample_epub(input_path)
+    captured: dict[str, object] = {}
+
+    async def fake_run_publishing_cli(*, input_path, output_path, config):
+        captured["input_path"] = input_path
+        captured["output_path"] = output_path
+        captured["config"] = config
+
+    monkeypatch.setattr("book_translator.cli._run_publishing_cli", fake_run_publishing_cli)
+
+    result = runner.invoke(
+        app,
+        [
+            "publishing",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--also-pdf",
+            "--audit-depth",
+            "standard",
+            "--no-cross-review",
+            "--image-policy",
+            "extract-or-preserve-caption",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert captured["input_path"] == input_path
+    assert captured["output_path"] == output_path
+    config = captured["config"]
+    assert isinstance(config, PublishingRunConfig)
+    assert config.also_pdf is True
+    assert config.also_epub is False
+    assert config.audit_depth == "standard"
+    assert config.enable_cross_review is False
+    assert config.image_policy == "extract-or-preserve-caption"
 
 
 def test_revise_chapter_returns_artifact_and_applies_lexicon() -> None:
