@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -219,3 +220,368 @@ async def test_process_book_publishing_reports_proofread_and_editorial_counts(
     assert summary["mode"] == "publishing"
     assert summary["proofread_notes"] > 0
     assert summary["editorial_log_entries"] > 0
+
+
+class DeepReviewProvider(FakeProvider):
+    async def translate(self, request):  # type: ignore[override]
+        self.calls += 1
+        if "First principle." in request.source_text:
+            return self.make_result(
+                chunk_id=request.chunk_id,
+                translated_text=(
+                    "译文::核心方法 1. 第一条原则。 2. 第二条原则。 3. 第三条原则。"
+                ),
+                input_tokens=10,
+                output_tokens=12,
+                estimated_cost_usd=0.001,
+            )
+        return await super().translate(request)
+
+
+def _build_numbered_list_epub(path: Path) -> None:
+    book = epub.EpubBook()
+    book.set_identifier("id-deep-review")
+    book.set_title("Deep Review EPUB")
+    chapter1 = epub.EpubHtml(title="Chapter 1", file_name="chapter1.xhtml", lang="en")
+    chapter1.content = """
+    <h1>Chapter 1</h1>
+    <p>Core methods:</p>
+    <p>1. First principle.</p>
+    <p>2. Second principle.</p>
+    <p>3. Third principle.</p>
+    """
+    book.add_item(chapter1)
+    book.toc = (chapter1,)
+    book.spine = ["nav", chapter1]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(str(path), book)
+
+
+@pytest.mark.asyncio
+async def test_process_book_publishing_runs_deep_review_and_rebuilds_final_text(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "deep-review.epub"
+    _build_numbered_list_epub(input_path)
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            to_stage="final-review",
+            render_pdf=False,
+        ),
+        provider=DeepReviewProvider(),
+    )
+
+    summary = await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            from_stage="deep-review",
+            to_stage="deep-review",
+            render_pdf=False,
+        ),
+        provider=FailIfCalledProvider(),
+    )
+
+    book_dir = tmp_path / "out" / "deep-review" / "publishing"
+    final_text = (book_dir / "final" / "translated.txt").read_text(encoding="utf-8")
+
+    assert summary["completed_stage"] == "deep-review"
+    assert (book_dir / "deep_review" / "findings.jsonl").exists()
+    assert (book_dir / "deep_review" / "revised_chapters.jsonl").exists()
+    assert (book_dir / "deep_review" / "decisions.json").exists()
+    assert "核心方法\n\n1. 第一条原则。\n2. 第二条原则。\n3. 第三条原则。" in final_text
+@pytest.mark.asyncio
+async def test_process_book_publishing_resume_from_revision_keeps_lexicon_decisions(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "sample.epub"
+    glossary_path = tmp_path / "glossary.json"
+    _build_sample_epub(input_path)
+    glossary_path.write_text(json.dumps({"Mars": "火星"}, ensure_ascii=False), encoding="utf-8")
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            glossary_path=glossary_path,
+            render_pdf=False,
+        ),
+        provider=FakeProvider(),
+    )
+
+    summary = await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            glossary_path=glossary_path,
+            from_stage="revision",
+            render_pdf=False,
+        ),
+        provider=FailIfCalledProvider(),
+    )
+
+    assert summary["decision_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_final_review_cache_hit_survives_rebuild_written_title_translations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "sample.epub"
+    _build_sample_epub(input_path)
+
+    async def fake_enrich_missing_titles(**kwargs):
+        workspace = kwargs["workspace"]
+        workspace.write_title_translations({"chapter-1-0": "第一章"})
+        return kwargs["book"]
+
+    def fake_render_polished_pdf(book, path, edition_label):
+        _ = book, edition_label
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("pdf", encoding="utf-8")
+
+    def fail_if_final_review_called(_proofread_artifacts):
+        raise AssertionError("final-review should have been skipped on cache hit")
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.enrich_missing_titles",
+        fake_enrich_missing_titles,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.render_polished_pdf",
+        fake_render_polished_pdf,
+    )
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            to_stage="final-review",
+        ),
+        provider=FakeProvider(),
+    )
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.apply_final_review",
+        fail_if_final_review_called,
+    )
+
+    summary = await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            from_stage="final-review",
+            to_stage="final-review",
+        ),
+        provider=FailIfCalledProvider(),
+    )
+
+    assert summary["completed_stage"] == "final-review"
+
+
+@pytest.mark.asyncio
+async def test_process_book_publishing_rebuilds_pdf_when_title_translations_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "sample.epub"
+    _build_sample_epub(input_path)
+
+    async def fake_enrich_missing_titles(**kwargs):
+        return kwargs["book"]
+
+    def fake_render_polished_pdf(book, path, edition_label):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "edition_label": edition_label,
+                    "chapters": [
+                        {
+                            "chapter_id": chapter.chapter_id,
+                            "title_en": chapter.title_en,
+                            "title_zh": chapter.title_zh,
+                        }
+                        for chapter in book.chapters
+                    ],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.enrich_missing_titles",
+        fake_enrich_missing_titles,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.render_polished_pdf",
+        fake_render_polished_pdf,
+    )
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            to_stage="deep-review",
+        ),
+        provider=FakeProvider(),
+    )
+
+    workspace_dir = tmp_path / "out" / "sample"
+    title_translations_path = workspace_dir / "title_translations.json"
+    pdf_path = workspace_dir / "publishing" / "final" / "translated.pdf"
+    original_pdf_payload = pdf_path.read_text(encoding="utf-8")
+
+    title_translations_path.write_text(
+        json.dumps({"chapter-1-0": "第一章"}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            from_stage="final-review",
+            to_stage="deep-review",
+        ),
+        provider=FailIfCalledProvider(),
+    )
+
+    rebuilt_pdf_payload = pdf_path.read_text(encoding="utf-8")
+
+    assert original_pdf_payload != rebuilt_pdf_payload
+    assert '"chapter_id": "chapter-1-0"' in rebuilt_pdf_payload
+    assert '"title_zh": "第一章"' in rebuilt_pdf_payload
+
+
+class PartialDeepReviewProvider(FakeProvider):
+    async def translate(self, request):  # type: ignore[override]
+        self.calls += 1
+        if "Needs cleanup." in request.source_text:
+            return self.make_result(
+                chunk_id=request.chunk_id,
+                translated_text="Draft  text with double spaces.",
+                input_tokens=10,
+                output_tokens=12,
+                estimated_cost_usd=0.001,
+            )
+        if "Already clean." in request.source_text:
+            return self.make_result(
+                chunk_id=request.chunk_id,
+                translated_text="Already clean.",
+                input_tokens=10,
+                output_tokens=12,
+                estimated_cost_usd=0.001,
+            )
+        return await super().translate(request)
+
+
+def _build_mixed_deep_review_epub(path: Path) -> None:
+    book = epub.EpubBook()
+    book.set_identifier("id-mixed-deep-review")
+    book.set_title("Mixed Deep Review EPUB")
+    chapter1 = epub.EpubHtml(title="Chapter 1", file_name="chapter1.xhtml", lang="en")
+    chapter1.content = """
+    <h1>Chapter 1</h1>
+    <p>Needs cleanup.</p>
+    """
+    chapter2 = epub.EpubHtml(title="Chapter 2", file_name="chapter2.xhtml", lang="en")
+    chapter2.content = """
+    <h1>Chapter 2</h1>
+    <p>Already clean.</p>
+    """
+    book.add_item(chapter1)
+    book.add_item(chapter2)
+    book.toc = (chapter1, chapter2)
+    book.spine = ["nav", chapter1, chapter2]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(str(path), book)
+
+
+@pytest.mark.asyncio
+async def test_process_book_publishing_reports_only_changed_deep_review_chapters(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "sample.epub"
+    _build_sample_epub(input_path)
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            to_stage="final-review",
+            render_pdf=False,
+        ),
+        provider=FakeProvider(),
+    )
+
+    final_chapters_path = (
+        tmp_path / "out" / "sample" / "publishing" / "final" / "final_chapters.jsonl"
+    )
+    final_chapters_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "chapter_id": "chapter-1-0",
+                        "chapter_index": 0,
+                        "title": "Chapter 1",
+                        "text": "Draft  text with double spaces.",
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "chapter_id": "chapter-2-1",
+                        "chapter_index": 1,
+                        "title": "Chapter 2",
+                        "text": "Already clean.",
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            from_stage="deep-review",
+            to_stage="deep-review",
+            render_pdf=False,
+        ),
+        provider=FailIfCalledProvider(),
+    )
+
+    assert summary["deep_review_revised_chapters"] == 1

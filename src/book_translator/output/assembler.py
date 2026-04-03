@@ -30,9 +30,14 @@ def assemble_output_text(
     return "\n\n".join(part.strip() for part in parts if part is not None).strip() + "\n"
 
 
-def assemble_publishing_output_text(chapters: list[PublishingChapterArtifact]) -> str:
+def assemble_publishing_output_text(
+    chapters: list[PublishingChapterArtifact],
+    *,
+    deep_review_chapters: list[PublishingChapterArtifact] | None = None,
+) -> str:
+    chapters_to_assemble = deep_review_chapters or chapters
     parts: list[str] = []
-    for chapter in sorted(chapters, key=lambda item: item.chapter_index):
+    for chapter in sorted(chapters_to_assemble, key=lambda item: item.chapter_index):
         parts.append(chapter.title)
         parts.append(chapter.text.strip())
         parts.append("")
