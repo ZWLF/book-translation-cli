@@ -152,6 +152,7 @@ def _render_chapter_html(
         )
 
     body_parts: list[str] = []
+    rendered_caption_block_ids: set[str] = set()
     index = 0
     blocks = sorted(chapter.blocks, key=lambda item: item.order_index)
     while index < len(blocks):
@@ -164,7 +165,16 @@ def _render_chapter_html(
             run, index = _collect_run(blocks, index, "unordered_item")
             body_parts.append(_render_unordered_run(run))
             continue
-        body_parts.append(_render_block(block, rendered_assets=rendered_assets))
+        if block.kind == "caption" and block.block_id in rendered_caption_block_ids:
+            index += 1
+            continue
+        rendered_block, consumed_caption_block_id = _render_block(
+            block,
+            rendered_assets=rendered_assets,
+        )
+        if consumed_caption_block_id:
+            rendered_caption_block_ids.add(consumed_caption_block_id)
+        body_parts.append(rendered_block)
         index += 1
 
     body = "\n".join(part for part in body_parts if part)
@@ -179,47 +189,60 @@ def _render_block(
     block: PublishingBlock,
     *,
     rendered_assets: dict[str, _RenderedAsset],
-) -> str:
+) -> tuple[str, str | None]:
     if block.kind == "paragraph":
-        return f"<p>{_render_inline(block.text)}</p>"
+        return f"<p>{_render_inline(block.text)}</p>", None
     if block.kind == "heading":
-        return f"<h2>{_render_inline(block.text)}</h2>"
+        return f"<h2>{_render_inline(block.text)}</h2>", None
     if block.kind == "callout":
-        return f"<aside class=\"callout\">{_render_paragraph_group(block.text)}</aside>"
+        return f"<aside class=\"callout\">{_render_paragraph_group(block.text)}</aside>", None
     if block.kind == "qa_question":
-        return f"<p class=\"qa-question\">{_render_inline(block.text)}</p>"
+        return f"<p class=\"qa-question\">{_render_inline(block.text)}</p>", None
     if block.kind == "qa_answer":
-        return f"<p class=\"qa-answer\">{_render_inline(block.text)}</p>"
+        return f"<p class=\"qa-answer\">{_render_inline(block.text)}</p>", None
     if block.kind == "quote":
-        return f"<blockquote>{_render_paragraph_group(block.text)}</blockquote>"
+        return f"<blockquote>{_render_paragraph_group(block.text)}</blockquote>", None
     if block.kind == "reference_entry":
-        return f"<p class=\"reference\">{_render_inline(block.text)}</p>"
+        return f"<p class=\"reference\">{_render_inline(block.text)}</p>", None
     if block.kind == "caption":
-        return _render_caption_block(block, rendered_assets=rendered_assets)
+        return _render_caption_block(block, rendered_assets=rendered_assets), None
     if block.kind == "image":
         return _render_image_block(block, rendered_assets=rendered_assets)
-    return f"<p>{_render_inline(block.text)}</p>" if block.text.strip() else ""
+    return (
+        f"<p>{_render_inline(block.text)}</p>" if block.text.strip() else "",
+        None,
+    )
 
 
 def _render_image_block(
     block: PublishingBlock,
     *,
     rendered_assets: dict[str, _RenderedAsset],
-) -> str:
+) -> tuple[str, str | None]:
     asset = _pick_render_asset(block, rendered_assets)
     if asset is None:
         if block.text.strip():
             return (
                 "<figure class=\"image-placeholder\">"
                 f"<figcaption>{_render_inline(block.text)}</figcaption>"
-                "</figure>"
+                "</figure>",
+                None,
             )
-        return ""
+        return "", None
+
+    figcaption = ""
+    consumed_caption_block_id = None
+    if asset.asset.caption:
+        figcaption = f"<figcaption>{_render_inline(asset.asset.caption)}</figcaption>"
+        consumed_caption_block_id = asset.asset.block_anchor_id
+
     return (
         "<figure class=\"image\">"
         f"<img src=\"{html_escape(asset.file_name)}\" "
         f"alt=\"{html_escape(block.text.strip() or asset.asset.caption or '')}\" />"
-        "</figure>"
+        f"{figcaption}"
+        "</figure>",
+        consumed_caption_block_id,
     )
 
 
@@ -262,9 +285,14 @@ def _pick_render_asset(
             caption = rendered.asset.caption or ""
             if caption and _normalize_key(caption) == normalized:
                 return rendered
-    for rendered in rendered_assets.values():
-        if rendered.asset.status == "extracted":
-            return rendered
+        return None
+    extracted_assets = {
+        rendered.asset.source_asset_id: rendered
+        for rendered in rendered_assets.values()
+        if rendered.asset.status == "extracted"
+    }
+    if len(extracted_assets) == 1:
+        return next(iter(extracted_assets.values()))
     return None
 
 

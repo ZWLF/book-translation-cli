@@ -275,6 +275,7 @@ async def test_process_book_publishing_from_stage_revision_skips_draft_and_lexic
         ("sample.pdf", False, False, True, False),
         ("sample.pdf", False, True, True, True),
         ("sample.epub", False, False, False, True),
+        ("sample.epub", True, False, True, True),
     ],
 )
 async def test_rebuild_stable_publishing_outputs_routes_primary_and_extra_formats(

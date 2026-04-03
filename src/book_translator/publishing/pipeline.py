@@ -196,7 +196,11 @@ async def process_book_publishing(
             "started_stage": config.from_stage,
             "completed_stage": completed_stage,
             "render_pdf": bool(
-                config.render_pdf and output_selection.primary_output == "pdf"
+                config.render_pdf
+                and (
+                    output_selection.primary_output == "pdf"
+                    or "pdf" in output_selection.additional_outputs
+                )
             ),
             "render_epub": bool(
                 output_selection.primary_output == "epub"
@@ -540,7 +544,10 @@ async def _ensure_final_review_stage(
         workspace.publishing_final_text_path,
         workspace.publishing_editorial_log_path,
     ]
-    if config.render_pdf and output_selection.primary_output == "pdf":
+    if config.render_pdf and (
+        output_selection.primary_output == "pdf"
+        or "pdf" in output_selection.additional_outputs
+    ):
         required_paths.append(workspace.publishing_final_pdf_path)
     if output_selection.primary_output == "epub" or "epub" in output_selection.additional_outputs:
         required_paths.append(workspace.publishing_final_epub_path)
@@ -631,7 +638,10 @@ async def _ensure_deep_review_stage(
         workspace.publishing_audit_report_path,
         workspace.publishing_final_text_path,
     ]
-    if config.render_pdf and output_selection.primary_output == "pdf":
+    if config.render_pdf and (
+        output_selection.primary_output == "pdf"
+        or "pdf" in output_selection.additional_outputs
+    ):
         required_paths.append(workspace.publishing_final_pdf_path)
     if output_selection.primary_output == "epub" or "epub" in output_selection.additional_outputs:
         required_paths.append(workspace.publishing_final_epub_path)
@@ -938,7 +948,13 @@ async def _rebuild_stable_publishing_outputs(
 ) -> None:
     workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
     selection = _output_selection(input_path=Path(manifest.source_path), config=config)
-    should_render_pdf = bool(config.render_pdf and selection.primary_output == "pdf")
+    should_render_pdf = bool(
+        config.render_pdf
+        and (
+            selection.primary_output == "pdf"
+            or "pdf" in selection.additional_outputs
+        )
+    )
     should_render_epub = bool(
         selection.primary_output == "epub" or "epub" in selection.additional_outputs
     )

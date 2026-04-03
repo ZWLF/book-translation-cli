@@ -65,13 +65,19 @@ def test_render_structured_epub_preserves_lists_callouts_and_image_fallbacks(
                         text="Falcon launch",
                         order_index=5,
                     ),
+                    PublishingBlock(
+                        block_id="chapter-1-block-6",
+                        kind="caption",
+                        text="Falcon launch",
+                        order_index=6,
+                    ),
                 ],
                 assets=[
                     PublishingAsset(
                         source_asset_id="asset-1",
                         extracted_path=str(image_path),
                         caption="Falcon launch",
-                        block_anchor_id="chapter-1-block-5",
+                        block_anchor_id="chapter-1-block-6",
                         status="extracted",
                     )
                 ],
@@ -137,4 +143,6 @@ def test_render_structured_epub_preserves_lists_callouts_and_image_fallbacks(
     assert "<ol class=\"ordered-list\">" in chapter_one
     assert "<aside class=\"callout\">" in chapter_one
     assert "<img src=\"images/chapter-1-asset-1.png\"" in chapter_one
+    assert chapter_one.count("<img src=\"images/chapter-1-asset-1.png\"") == 1
+    assert "<figcaption>Falcon launch</figcaption>" in chapter_one
     assert "<figcaption>Missing launch</figcaption>" in chapter_two
