@@ -1,13 +1,21 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class StyleProfile(BaseModel):
-    name: str
-    voice: str
-    sentence_rules: list[str] = Field(default_factory=list)
-    prohibited_patterns: list[str] = Field(default_factory=list)
+    name: str = Field(min_length=1)
+    voice: str = Field(min_length=1)
+    sentence_rules: list[str] = Field(default_factory=list, min_length=1)
+    prohibited_patterns: list[str] = Field(default_factory=list, min_length=1)
+
+    @field_validator("name", "voice")
+    @classmethod
+    def _strip_and_reject_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be empty")
+        return stripped
 
 
 _STYLE_PROFILES: dict[str, StyleProfile] = {

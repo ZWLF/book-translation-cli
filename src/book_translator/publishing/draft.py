@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from book_translator.publishing.style import StyleProfile
 
@@ -14,6 +14,12 @@ class DraftRequest(BaseModel):
     chunk_index: int
     chunk_text: str
     source_text: str
+
+    @model_validator(mode="after")
+    def _ensure_style_name_matches_style(self) -> "DraftRequest":
+        if self.style_name != self.style.name:
+            raise ValueError("style_name must match style.name")
+        return self
 
 
 def build_draft_request(
