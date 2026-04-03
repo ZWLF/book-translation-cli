@@ -10,11 +10,16 @@ from typing import Any
 from book_translator.chaptering.detect import detect_chapters
 from book_translator.chaptering.manual_toc import load_manual_toc_titles
 from book_translator.chunking.splitter import split_chapter_into_chunks
-from book_translator.config import PUBLISHING_STAGES, PublishingRunConfig
+from book_translator.config import (
+    PUBLISHING_STAGES,
+    PublishingRunConfig,
+    resolve_publishing_outputs,
+)
 from book_translator.models import (
     Chapter,
     Manifest,
     PublishingChapterArtifact,
+    StructuredPublishingBook,
     StructuredPublishingChapter,
 )
 from book_translator.output.assembler import (
@@ -22,6 +27,7 @@ from book_translator.output.assembler import (
     assemble_structured_chapter_text,
     assemble_structured_publishing_output_text,
 )
+from book_translator.output.epub_renderer import render_structured_epub
 from book_translator.output.polished_pdf import (
     build_printable_book_from_artifacts,
     render_polished_pdf,
@@ -40,11 +46,13 @@ from book_translator.publishing.final_review import (
 from book_translator.publishing.lexicon import merge_lexicon_overrides, normalize_lexicon_records
 from book_translator.publishing.proofread import PROOFREAD_STAGE_VERSION, proofread_chapter
 from book_translator.publishing.revision import revise_chapter
+from book_translator.publishing.structure import build_structured_chapter
 from book_translator.state.workspace import Workspace
 from book_translator.translation.orchestrator import translate_chunks
 from book_translator.utils import file_fingerprint, slugify
 
 PDF_ANNOTATION_RENDERER_VERSION = "deep-review-pdf-v2"
+EPUB_RENDERER_VERSION = "structured-epub-v1"
 
 
 async def process_book_publishing(
@@ -170,6 +178,7 @@ async def process_book_publishing(
         if _stage_index("lexicon") > _stage_index(config.to_stage):
             decisions = []
 
+        output_selection = _output_selection(input_path=input_path, config=config)
         summary = {
             "mode": "publishing",
             "style": config.style,
@@ -187,7 +196,11 @@ async def process_book_publishing(
             "started_stage": config.from_stage,
             "completed_stage": completed_stage,
             "render_pdf": bool(
-                config.render_pdf and _stage_index(config.to_stage) >= _stage_index("final-review")
+                config.render_pdf and output_selection.primary_output == "pdf"
+            ),
+            "render_epub": bool(
+                output_selection.primary_output == "epub"
+                or "epub" in output_selection.additional_outputs
             ),
             "editorial_log_entries": len(editorial_log),
             "proofread_notes": len(proofread_notes),
@@ -521,13 +534,16 @@ async def _ensure_final_review_stage(
         workspace=workspace,
         config=config,
     )
+    output_selection = _output_selection(input_path=Path(manifest.source_path), config=config)
     required_paths = [
         workspace.publishing_final_chapters_path,
         workspace.publishing_final_text_path,
         workspace.publishing_editorial_log_path,
     ]
-    if config.render_pdf:
+    if config.render_pdf and output_selection.primary_output == "pdf":
         required_paths.append(workspace.publishing_final_pdf_path)
+    if output_selection.primary_output == "epub" or "epub" in output_selection.additional_outputs:
+        required_paths.append(workspace.publishing_final_epub_path)
 
     if not _should_run_stage(
         workspace=workspace,
@@ -604,6 +620,7 @@ async def _ensure_deep_review_stage(
         final_review_state=final_review_state,
         config=config,
     )
+    output_selection = _output_selection(input_path=Path(manifest.source_path), config=config)
     required_paths = [
         workspace.publishing_deep_review_findings_path,
         workspace.publishing_deep_review_chapters_path,
@@ -614,8 +631,10 @@ async def _ensure_deep_review_stage(
         workspace.publishing_audit_report_path,
         workspace.publishing_final_text_path,
     ]
-    if config.render_pdf:
+    if config.render_pdf and output_selection.primary_output == "pdf":
         required_paths.append(workspace.publishing_final_pdf_path)
+    if output_selection.primary_output == "epub" or "epub" in output_selection.additional_outputs:
+        required_paths.append(workspace.publishing_final_epub_path)
 
     if not _should_run_stage(
         workspace=workspace,
@@ -740,6 +759,10 @@ def _load_publishing_artifacts(
     ]
 
 
+def _output_selection(*, input_path: Path, config: PublishingRunConfig):
+    return resolve_publishing_outputs(input_path, config)
+
+
 def _load_structured_publishing_chapters(
     path: Path,
     workspace: Workspace,
@@ -857,6 +880,7 @@ def _final_review_stage_fingerprint(
             "final_review_stage_version": FINAL_REVIEW_STAGE_VERSION,
             "pdf_front_matter_version": "publishing-edition-v6",
             "pdf_annotation_renderer_version": PDF_ANNOTATION_RENDERER_VERSION,
+            "epub_renderer_version": EPUB_RENDERER_VERSION,
             "title_translations_fingerprint": _title_translations_fingerprint(workspace),
         }
     )
@@ -877,6 +901,7 @@ def _deep_review_stage_fingerprint(
             "enable_cross_review": config.enable_cross_review,
             "deep_review_stage_version": DEEP_REVIEW_STAGE_VERSION,
             "pdf_annotation_renderer_version": PDF_ANNOTATION_RENDERER_VERSION,
+            "epub_renderer_version": EPUB_RENDERER_VERSION,
             "title_translations_fingerprint": _title_translations_fingerprint(workspace),
             "deep_review_decisions_fingerprint": _deep_review_decisions_fingerprint(workspace),
         }
@@ -907,56 +932,96 @@ async def _rebuild_stable_publishing_outputs(
     config: PublishingRunConfig,
     provider: BaseProvider | None,
     summary_metrics: dict[str, float | int],
-    deep_review_book: object | None = None,
+    deep_review_book: StructuredPublishingBook | None = None,
     deep_review_chapters: list[PublishingChapterArtifact] | None = None,
     deep_review_decisions: dict[str, object] | None = None,
 ) -> None:
     workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
+    selection = _output_selection(input_path=Path(manifest.source_path), config=config)
+    should_render_pdf = bool(config.render_pdf and selection.primary_output == "pdf")
+    should_render_epub = bool(
+        selection.primary_output == "epub" or "epub" in selection.additional_outputs
+    )
     if deep_review_book is not None:
         final_text = assemble_structured_publishing_output_text(deep_review_book)
     else:
         final_text = assemble_publishing_output_text(chapters)
     temp_text_path = workspace.publishing_final_text_path.with_suffix(".txt.tmp")
     temp_pdf_path = workspace.publishing_final_pdf_path.with_suffix(".pdf.tmp")
+    temp_epub_path = workspace.publishing_final_epub_path.with_suffix(".epub.tmp")
     temp_text_path.write_text(final_text, encoding="utf-8")
 
-    if not config.render_pdf:
+    if not should_render_pdf and not should_render_epub:
         temp_text_path.replace(workspace.publishing_final_text_path)
         return
 
-    printable_book = build_printable_book_from_artifacts(
-        manifest=manifest,
-        summary={
-            "estimated_cost_usd": summary_metrics["estimated_cost_usd"],
-        },
-        chapters=deep_review_chapters or chapters,
-        title_overrides=workspace.read_title_translations(),
-        deep_review_decisions=deep_review_decisions,
+    printable_book = None
+    structured_book = deep_review_book or _build_structured_book_from_artifacts(
+        chapters=deep_review_chapters or chapters
     )
-    api_key: str | None = None
-    try:
-        api_key = config.resolved_api_key() if provider is None else None
-    except ValueError:
-        api_key = None
-    printable_book = await enrich_missing_titles(
-        book=printable_book,
-        workspace=workspace,
-        provider_name=config.provider,
-        model=config.resolved_model(),
-        api_key=api_key,
-        max_concurrency=config.max_concurrency,
-        max_attempts=config.max_attempts,
-    )
-    try:
-        render_polished_pdf(
-            printable_book,
-            temp_pdf_path,
-            edition_label="publishing",
+    if should_render_pdf:
+        printable_book = build_printable_book_from_artifacts(
+            manifest=manifest,
+            summary={
+                "estimated_cost_usd": summary_metrics["estimated_cost_usd"],
+            },
+            chapters=deep_review_chapters or chapters,
+            title_overrides=workspace.read_title_translations(),
+            deep_review_decisions=deep_review_decisions,
         )
+        api_key: str | None = None
+        try:
+            api_key = config.resolved_api_key() if provider is None else None
+        except ValueError:
+            api_key = None
+        printable_book = await enrich_missing_titles(
+            book=printable_book,
+            workspace=workspace,
+            provider_name=config.provider,
+            model=config.resolved_model(),
+            api_key=api_key,
+            max_concurrency=config.max_concurrency,
+            max_attempts=config.max_attempts,
+        )
+    try:
+        if should_render_pdf and printable_book is not None:
+            render_polished_pdf(
+                printable_book,
+                temp_pdf_path,
+                edition_label="publishing",
+            )
+        if should_render_epub:
+            render_structured_epub(
+                structured_book,
+                temp_epub_path,
+                book_title=Path(manifest.source_path).stem,
+                author=printable_book.author if printable_book is not None else None,
+            )
         temp_text_path.replace(workspace.publishing_final_text_path)
-        temp_pdf_path.replace(workspace.publishing_final_pdf_path)
+        if should_render_pdf and temp_pdf_path.exists():
+            temp_pdf_path.replace(workspace.publishing_final_pdf_path)
+        if should_render_epub and temp_epub_path.exists():
+            temp_epub_path.replace(workspace.publishing_final_epub_path)
     finally:
         if temp_text_path.exists():
             temp_text_path.unlink()
         if temp_pdf_path.exists():
             temp_pdf_path.unlink()
+        if temp_epub_path.exists():
+            temp_epub_path.unlink()
+
+
+def _build_structured_book_from_artifacts(
+    *,
+    chapters: list[PublishingChapterArtifact],
+) -> StructuredPublishingBook:
+    structured_chapters = [
+        build_structured_chapter(
+            artifact=chapter,
+            source_text=chapter.text,
+            source_assets=[],
+            source_title=chapter.title,
+        )
+        for chapter in chapters
+    ]
+    return StructuredPublishingBook(title="", chapters=structured_chapters)

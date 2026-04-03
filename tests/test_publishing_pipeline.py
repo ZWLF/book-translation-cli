@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from ebooklib import epub
+from reportlab.pdfgen import canvas
 from typer.testing import CliRunner
 
 from book_translator.cli import app
@@ -11,10 +12,19 @@ from book_translator.config import (
     PublishingRunConfig,
     resolve_publishing_outputs,
 )
-from book_translator.models import PublishingChapterArtifact
+from book_translator.models import (
+    Manifest,
+    PublishingBlock,
+    PublishingChapterArtifact,
+    StructuredPublishingBook,
+    StructuredPublishingChapter,
+)
 from book_translator.providers.base import BaseProvider
 from book_translator.publishing.final_review import apply_final_review
-from book_translator.publishing.pipeline import process_book_publishing
+from book_translator.publishing.pipeline import (
+    _rebuild_stable_publishing_outputs,
+    process_book_publishing,
+)
 from book_translator.publishing.proofread import proofread_chapter
 from book_translator.publishing.revision import revise_chapter
 
@@ -57,6 +67,16 @@ def _build_sample_epub(path: Path) -> None:
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     epub.write_epub(str(path), book)
+
+
+def _build_sample_pdf(path: Path) -> None:
+    pdf = canvas.Canvas(str(path))
+    pdf.drawString(72, 760, "Chapter 1")
+    pdf.drawString(72, 736, "Hello world.")
+    pdf.showPage()
+    pdf.drawString(72, 760, "Chapter 2")
+    pdf.drawString(72, 736, "Goodbye world.")
+    pdf.save()
 
 
 def test_publishing_run_config_includes_new_defaults() -> None:
@@ -212,9 +232,12 @@ async def test_process_book_publishing_writes_stage_artifacts(tmp_path: Path) ->
     assert (book_dir / "draft" / "chapters.jsonl").exists()
     assert (book_dir / "lexicon" / "glossary.json").exists()
     assert (book_dir / "final" / "translated.txt").exists()
-    assert (book_dir / "final" / "translated.pdf").exists()
+    assert (book_dir / "final" / "translated.epub").exists()
+    assert not (book_dir / "final" / "translated.pdf").exists()
     assert (book_dir / "editorial_log.json").exists()
     assert summary["mode"] == "publishing"
+    assert summary["render_pdf"] is False
+    assert summary["render_epub"] is True
 
 
 @pytest.mark.asyncio
@@ -243,6 +266,131 @@ async def test_process_book_publishing_from_stage_revision_skips_draft_and_lexic
     )
 
     assert summary["started_stage"] == "revision"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_name", "also_pdf", "also_epub", "expect_pdf", "expect_epub"),
+    [
+        ("sample.pdf", False, False, True, False),
+        ("sample.pdf", False, True, True, True),
+        ("sample.epub", False, False, False, True),
+    ],
+)
+async def test_rebuild_stable_publishing_outputs_routes_primary_and_extra_formats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_name: str,
+    also_pdf: bool,
+    also_epub: bool,
+    expect_pdf: bool,
+    expect_epub: bool,
+) -> None:
+    workspace = tmp_path / "book"
+    workspace.mkdir()
+    from book_translator.state.workspace import Workspace
+
+    book_workspace = Workspace(workspace)
+    manifest = Manifest(
+        book_id="book",
+        source_path=str(tmp_path / source_name),
+        source_fingerprint="fingerprint",
+        provider="openai",
+        model="gpt-4o-mini",
+        config_fingerprint="config",
+    )
+    chapters = [
+        PublishingChapterArtifact(
+            chapter_id="chapter-1",
+            chapter_index=0,
+            title="Chapter 1",
+            text="Hello world.",
+        )
+    ]
+    structured_book = StructuredPublishingBook(
+        title="Publishing EPUB",
+        chapters=[
+            StructuredPublishingChapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                source_title="Chapter 1",
+                translated_title="第一章：开始",
+                blocks=[
+                    PublishingBlock(
+                        block_id="chapter-1-block-1",
+                        kind="paragraph",
+                        text="Hello world.",
+                        order_index=1,
+                    )
+                ],
+                assets=[],
+            )
+        ],
+    )
+    config = PublishingRunConfig(
+        provider="openai",
+        model="gpt-4o-mini",
+        also_pdf=also_pdf,
+        also_epub=also_epub,
+    )
+    summary_metrics = {"estimated_cost_usd": 0.0}
+    calls: list[str] = []
+
+    class DummyPrintableBook:
+        author = "ZWLF"
+
+    async def fake_enrich_missing_titles(*, book, **kwargs):
+        calls.append("enrich")
+        return book
+
+    def fake_build_printable_book_from_artifacts(**kwargs):
+        calls.append("build_pdf")
+        return DummyPrintableBook()
+
+    def fake_render_polished_pdf(book, path, *, edition_label):
+        calls.append("render_pdf")
+        path.write_bytes(b"pdf")
+
+    def fake_render_structured_epub(book, path, **kwargs):
+        calls.append("render_epub")
+        path.write_bytes(b"epub")
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.enrich_missing_titles",
+        fake_enrich_missing_titles,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.build_printable_book_from_artifacts",
+        fake_build_printable_book_from_artifacts,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.render_polished_pdf",
+        fake_render_polished_pdf,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.render_structured_epub",
+        fake_render_structured_epub,
+    )
+
+    await _rebuild_stable_publishing_outputs(
+        workspace=book_workspace,
+        manifest=manifest,
+        chapters=chapters,
+        config=config,
+        provider=FakeProvider(),
+        summary_metrics=summary_metrics,
+        deep_review_book=structured_book if expect_epub else None,
+        deep_review_chapters=chapters,
+        deep_review_decisions={},
+    )
+
+    assert (workspace / "publishing" / "final" / "translated.txt").exists()
+    assert (workspace / "publishing" / "final" / "translated.pdf").exists() == expect_pdf
+    assert (workspace / "publishing" / "final" / "translated.epub").exists() == expect_epub
+    assert ("render_pdf" in calls) == expect_pdf
+    assert ("render_epub" in calls) == expect_epub
+    assert ("build_pdf" in calls) == expect_pdf
+    assert ("enrich" in calls) == expect_pdf
 
 
 def test_proofread_chapter_normalizes_spacing_and_emits_notes() -> None:
@@ -517,8 +665,8 @@ async def test_process_book_publishing_rebuilds_pdf_when_title_translations_chan
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_path = tmp_path / "sample.epub"
-    _build_sample_epub(input_path)
+    input_path = tmp_path / "sample.pdf"
+    _build_sample_pdf(input_path)
 
     async def fake_enrich_missing_titles(**kwargs):
         return kwargs["book"]
@@ -712,8 +860,8 @@ async def test_deep_review_rerun_preserves_last_good_final_outputs_on_render_fai
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_path = tmp_path / "sample.epub"
-    _build_sample_epub(input_path)
+    input_path = tmp_path / "sample.pdf"
+    _build_sample_pdf(input_path)
 
     async def fake_enrich_missing_titles(**kwargs):
         return kwargs["book"]
