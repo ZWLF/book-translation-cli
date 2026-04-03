@@ -65,6 +65,14 @@ class RunConfig(BaseModel):
         return hashlib.sha256(raw).hexdigest()
 
 
+class PublishingRunConfig(BaseModel):
+    style: str = "non-fiction-publishing"
+    from_stage: str = "draft"
+    to_stage: str = "final-review"
+    mode: str = "publishing"
+    max_concurrency: int = 3
+
+
 def _read_dotenv_value(path: Path, key: str) -> str | None:
     if not path.exists():
         return None
