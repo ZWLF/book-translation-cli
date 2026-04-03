@@ -473,7 +473,7 @@ async def _ensure_final_review_stage(
             "proofread_stage": workspace.read_publishing_stage_state("proofread").model_dump(),
             "style": config.style,
             "final_review_stage_version": FINAL_REVIEW_STAGE_VERSION,
-            "pdf_front_matter_version": "publishing-edition-v4",
+            "pdf_front_matter_version": "publishing-edition-v6",
         }
     )
     required_paths = [

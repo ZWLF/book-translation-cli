@@ -12,6 +12,7 @@ from book_translator.output.polished_pdf import (
     _build_toc_label_html,
     _classify_title_kind,
     _contains_chinese,
+    _preferred_chapter_title_zh,
     _tighten_mixed_text_spacing,
 )
 from book_translator.state.workspace import Workspace
@@ -83,29 +84,34 @@ async def enrich_missing_titles(
 
 
 def _apply_title_overrides(book: PrintableBook, overrides: dict[str, str]) -> PrintableBook:
-    chapters = [
-        PrintableChapter(
-            chapter_id=chapter.chapter_id,
-            chapter_index=chapter.chapter_index,
-            source_title=chapter.source_title,
-            title_kind=_classify_title_kind(
-                chapter.title_en,
-                overrides.get(chapter.chapter_id) or chapter.title_zh,
-            ),
-            title_en=chapter.title_en,
-            title_zh=overrides.get(chapter.chapter_id) or chapter.title_zh,
-            header_title=_build_header_title(
-                chapter.title_en,
-                overrides.get(chapter.chapter_id) or chapter.title_zh,
-            ),
-            toc_label_html=_build_toc_label_html(
-                chapter.title_en,
-                overrides.get(chapter.chapter_id) or chapter.title_zh,
-            ),
-            blocks=chapter.blocks,
+    chapters: list[PrintableChapter] = []
+    for chapter in book.chapters:
+        resolved_title_zh = _preferred_chapter_title_zh(
+            chapter.title_en,
+            overrides.get(chapter.chapter_id) or chapter.title_zh,
         )
-        for chapter in book.chapters
-    ]
+        chapters.append(
+            PrintableChapter(
+                chapter_id=chapter.chapter_id,
+                chapter_index=chapter.chapter_index,
+                source_title=chapter.source_title,
+                title_kind=_classify_title_kind(
+                    chapter.title_en,
+                    resolved_title_zh,
+                ),
+                title_en=chapter.title_en,
+                title_zh=resolved_title_zh,
+                header_title=_build_header_title(
+                    chapter.title_en,
+                    resolved_title_zh,
+                ),
+                toc_label_html=_build_toc_label_html(
+                    chapter.title_en,
+                    resolved_title_zh,
+                ),
+                blocks=chapter.blocks,
+            )
+        )
     return PrintableBook(
         book_id=book.book_id,
         title_en=book.title_en,
