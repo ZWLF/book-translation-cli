@@ -448,6 +448,45 @@ def test_build_printable_book_from_artifacts_styles_inline_sentence_citations() 
     assert "2F5BD2" in chapter.blocks[0].text
 
 
+def test_build_printable_book_from_artifacts_restores_numbered_method_lists() -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-69",
+        chapter_index=0,
+        title="The 69 Core Musk Methods",
+        text="\n\n".join(
+            [
+                "这些方法被选为促使埃隆及其公司取得成功的根本理念。它们已被编辑或改写为简短且令人难忘的准则。",
+                "\n".join(
+                    [
+                        "1. 你拥有的能力远超你的想象。",
+                        "2. 普通人完全可以选择变得不普通。",
+                        "3. 你可以自学任何东西。",
+                    ]
+                ),
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+        title_overrides={"chapter-69": "马斯克核心法则69条"},
+    )
+
+    chapter = book.chapters[0]
+    assert chapter.title_zh == "马斯克的 69 条核心法则"
+    assert [block.kind for block in chapter.blocks] == [
+        "paragraph",
+        "numbered_item",
+        "numbered_item",
+        "numbered_item",
+    ]
+    assert chapter.blocks[1].text.startswith("1. ")
+    assert chapter.blocks[2].text.startswith("2. ")
+    assert chapter.blocks[3].text.startswith("3. ")
+
+
 def test_build_printable_book_from_artifacts_keeps_numeric_leading_body_blocks() -> None:
     artifact = PublishingChapterArtifact(
         chapter_id="chapter-1",

@@ -162,6 +162,31 @@ def test_proofread_chapter_normalizes_spacing_and_emits_notes() -> None:
     assert any(note["type"] == "spacing_normalization" for note in notes)
 
 
+def test_proofread_chapter_restores_numbered_methods_sections() -> None:
+    chapter = PublishingChapterArtifact(
+        chapter_id="chapter-69",
+        chapter_index=0,
+        title="The 69 Core Musk Methods",
+        text=(
+            "以下是《埃隆·马斯克传：目标与成功指南》中“69 条核心马斯克方法”的简体中文翻译："
+            "这些方法被选为促使埃隆及其公司取得成功的根本理念。"
+            "它们已被编辑或改写为简短且令人难忘的准则。"
+            "1. 你拥有的能力远超你的想象。"
+            "2. 普通人完全可以选择变得不普通。"
+            "3. 你可以自学任何东西。"
+        ),
+    )
+
+    final_artifact, notes = proofread_chapter(chapter)
+
+    assert "以下是《" not in final_artifact.text
+    assert "这些方法被选为促使埃隆及其公司取得成功的根本理念。" in final_artifact.text
+    assert "\n\n1. 你拥有的能力远超你的想象。" in final_artifact.text
+    assert "\n2. 普通人完全可以选择变得不普通。" in final_artifact.text
+    assert "\n3. 你可以自学任何东西。" in final_artifact.text
+    assert any(note["type"] == "spacing_normalization" for note in notes)
+
+
 def test_apply_final_review_sorts_and_emits_editorial_log() -> None:
     chapters = [
         PublishingChapterArtifact(chapter_id="b", chapter_index=1, title="B", text="Two  words 。"),

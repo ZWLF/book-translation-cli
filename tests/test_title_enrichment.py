@@ -89,3 +89,42 @@ async def test_enrich_missing_titles_translates_only_missing_entries(tmp_path: P
     assert enriched.chapters[0].title_zh == "痴迷于成功"
     assert enriched.chapters[1].title_zh == "像物理学家一样思考"
     assert workspace.read_title_translations() == {"chapter-1": "痴迷于成功"}
+
+
+@pytest.mark.asyncio
+async def test_enrich_missing_titles_normalizes_cached_method_titles(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "book")
+    workspace.root.mkdir(parents=True, exist_ok=True)
+    workspace.write_title_translations({"chapter-1": "马斯克核心法则69条"})
+
+    book = PrintableBook(
+        book_id="sample-book",
+        title_en="Sample Book",
+        title_zh="示例图书",
+        author="Author Name",
+        source_path=r"H:\books\Sample Book (Author Name).pdf",
+        provider="gemini",
+        model="gemini-3.1-flash-lite-preview",
+        estimated_cost_usd=0.0,
+        chapters=[
+            PrintableChapter(
+                chapter_id="chapter-1",
+                chapter_index=0,
+                source_title="The 69 Core Musk Methods",
+                title_kind="chapter",
+                title_en="The 69 Core Musk Methods",
+                title_zh=None,
+                header_title="The 69 Core Musk Methods",
+                toc_label_html="The 69 Core Musk Methods",
+                blocks=[PrintableBlock(kind="paragraph", text="正文")],
+            )
+        ],
+    )
+
+    enriched = await enrich_missing_titles(
+        book=book,
+        workspace=workspace,
+        translator=None,
+    )
+
+    assert enriched.chapters[0].title_zh == "马斯克的 69 条核心法则"

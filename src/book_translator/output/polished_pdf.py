@@ -194,10 +194,19 @@ def _build_printable_book_from_entries(
                     )
                     continue
 
+                if len(cleaned_lines) == 1 and _looks_like_numbered_item(cleaned_lines[0]):
+                    printable_blocks.append(PrintableBlock(kind="numbered_item", text=block_text))
+                    continue
+
                 printable_blocks.append(PrintableBlock(kind="paragraph", text=block_text))
 
         if not printable_blocks:
             continue
+
+        resolved_title_zh = _preferred_chapter_title_zh(
+            entry["source_title"],
+            title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+        )
 
         chapters.append(
             PrintableChapter(
@@ -206,17 +215,17 @@ def _build_printable_book_from_entries(
                 source_title=entry["source_title"],
                 title_kind=_classify_title_kind(
                     entry["source_title"],
-                    title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+                    resolved_title_zh,
                 ),
                 title_en=entry["source_title"],
-                title_zh=title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+                title_zh=resolved_title_zh,
                 header_title=_build_header_title(
                     entry["source_title"],
-                    title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+                    resolved_title_zh,
                 ),
                 toc_label_html=_build_toc_label_html(
                     entry["source_title"],
-                    title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+                    resolved_title_zh,
                 ),
                 blocks=printable_blocks,
             )
@@ -424,6 +433,14 @@ def render_polished_pdf(
         alignment=TA_LEFT,
         wordWrap="CJK",
     )
+    numbered_item_style = ParagraphStyle(
+        "NumberedItem",
+        parent=body_style,
+        leftIndent=7 * mm,
+        firstLineIndent=-5 * mm,
+        spaceBefore=0.2 * mm,
+        spaceAfter=1.1 * mm,
+    )
     callout_style = ParagraphStyle(
         "CalloutZh",
         parent=body_style,
@@ -548,6 +565,8 @@ def render_polished_pdf(
                 story.append(Spacer(1, 2.2 * mm))
             elif block.kind == "reference":
                 story.append(Paragraph(block.text, reference_style))
+            elif block.kind == "numbered_item":
+                story.append(Paragraph(block.text, numbered_item_style))
             else:
                 plain_text = _strip_inline_markup(block.text)
                 paragraph_style = (
@@ -867,6 +886,8 @@ def _split_semantic_lines(lines: list[str]) -> list[list[str]]:
         return []
     if re.fullmatch(r"\d+", normalized[0]):
         return [normalized]
+    if normalized and all(_looks_like_numbered_item(value) for value in normalized):
+        return [[value] for value in normalized]
 
     blocks: list[list[str]] = []
     current: list[str] = []
@@ -950,6 +971,10 @@ def _looks_like_section_heading(text: str) -> bool:
     return False
 
 
+def _looks_like_numbered_item(text: str) -> bool:
+    return re.match(r"^\d{1,3}\.\s+\S", text) is not None
+
+
 def _looks_like_callout(lines: list[str], citation_numbers: list[str]) -> bool:
     if not citation_numbers:
         return False
@@ -1000,6 +1025,15 @@ def _normalize_book_title(title: str) -> str:
     if title == "The Book of Elon A Guide to Purpose and Success":
         return "The Book of Elon: A Guide to Purpose and Success"
     return title
+
+
+def _preferred_chapter_title_zh(title_en: str, title_zh: str | None) -> str | None:
+    if not title_zh:
+        return None
+    normalized = re.sub(r"^(.+?)核心法则(\d+)条$", r"\1的 \2 条核心法则", title_zh)
+    if title_en == "The 69 Core Musk Methods" and normalized == title_zh:
+        return "马斯克的 69 条核心法则"
+    return normalized
 
 
 def _preferred_cover_title_zh(title_en: str, title_zh: str | None) -> str:
