@@ -2,12 +2,13 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from book_translator.models import Chunk, Manifest, TranslationResult
+from book_translator.models import Chunk, Manifest, PublishingChapterArtifact, TranslationResult
 from book_translator.output.polished_pdf import (
     PrintableBlock,
     PrintableBook,
     PrintableChapter,
     build_printable_book,
+    build_printable_book_from_artifacts,
     render_polished_pdf,
     running_header_texts,
 )
@@ -315,6 +316,168 @@ def test_build_printable_book_converts_reference_entries_and_strips_markdown() -
     assert chapter.blocks[1].text == "36 “第二条参考资料”。"
     assert chapter.blocks[2].text == "反馈重于感受"
     assert chapter.blocks[3].text == "这是正文第一行这是正文第二行。"
+
+
+def test_build_printable_book_marks_short_quoted_blocks_as_callouts() -> None:
+    chunks = [
+        _chunk(
+            chunk_id="chapter-1-0",
+            chapter_id="chapter-1",
+            chapter_index=0,
+            chunk_index=0,
+            title="Chapter One",
+        )
+    ]
+    translations = {
+        "chapter-1-0": _translation(
+            "chapter-1-0",
+            "\n".join(
+                [
+                    "Life is too short for long-term grudges.",
+                    "459",
+                ]
+            ),
+        )
+    }
+
+    book = build_printable_book(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chunks=chunks,
+        translations=translations,
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["callout"]
+    assert "Life is too short for long-term grudges." in chapter.blocks[0].text
+    assert "459" in chapter.blocks[0].text
+    assert "2F5BD2" in chapter.blocks[0].text
+
+
+def test_build_printable_book_appends_inline_citations_to_regular_paragraphs() -> None:
+    chunks = [
+        _chunk(
+            chunk_id="chapter-1-0",
+            chapter_id="chapter-1",
+            chapter_index=0,
+            chunk_index=0,
+            title="Chapter One",
+        )
+    ]
+    translations = {
+        "chapter-1-0": _translation(
+            "chapter-1-0",
+            "\n".join(
+                [
+                    "Instead of fighting during a critical time, I thought it was best to concede.",
+                    "I had to focus on keeping the company alive and preserving the team.",
+                    "456",
+                ]
+            ),
+        )
+    }
+
+    book = build_printable_book(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chunks=chunks,
+        translations=translations,
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["paragraph"]
+    assert "I thought it was best to concede." in chapter.blocks[0].text
+    assert "456" in chapter.blocks[0].text
+    assert "2F5BD2" in chapter.blocks[0].text
+    assert "<super>456</super>" in chapter.blocks[0].text
+
+
+def test_build_printable_book_from_artifacts_splits_single_newline_citation_sequences() -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-1",
+        chapter_index=0,
+        title="From Exile to Exit",
+        text="\n".join(
+            [
+                "I thought it was best to concede during a difficult transition.",
+                "456",
+                "Life is too short for long-term grudges.",
+                "459",
+                "I put almost all of my money into the next game.",
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["paragraph", "callout", "paragraph"]
+    assert "<super>456</super>" in chapter.blocks[0].text
+    assert "<super>459</super>" in chapter.blocks[1].text
+    assert "Life is too short for long-term grudges." in chapter.blocks[1].text
+
+
+def test_build_printable_book_from_artifacts_keeps_numeric_leading_body_blocks() -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-1",
+        chapter_index=0,
+        title="Chapter One",
+        text="\n".join(
+            [
+                "2024",
+                "was the hardest year.",
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["paragraph"]
+    assert chapter.blocks[0].text == "2024 was the hardest year."
+
+
+def test_build_printable_book_treats_short_cited_lines_without_punctuation_as_callouts() -> None:
+    chunks = [
+        _chunk(
+            chunk_id="chapter-1-0",
+            chapter_id="chapter-1",
+            chapter_index=0,
+            chunk_index=0,
+            title="Chapter One",
+        )
+    ]
+    translations = {
+        "chapter-1-0": _translation(
+            "chapter-1-0",
+            "\n".join(
+                [
+                    "Move fast",
+                    "456",
+                ]
+            ),
+        )
+    }
+
+    book = build_printable_book(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chunks=chunks,
+        translations=translations,
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["callout"]
+    assert "<super>456</super>" in chapter.blocks[0].text
+    assert "Move fast" in chapter.blocks[0].text
 
 
 def test_build_printable_book_strips_prompt_echo_wrappers() -> None:
