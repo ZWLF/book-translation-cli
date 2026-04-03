@@ -20,9 +20,12 @@ from book_translator.output.polished_pdf import (
 from book_translator.output.title_enrichment import enrich_missing_titles
 from book_translator.pipeline import _build_provider, _extract_book, _load_mapping
 from book_translator.providers.base import BaseProvider
-from book_translator.publishing.final_review import apply_final_review
+from book_translator.publishing.final_review import (
+    FINAL_REVIEW_STAGE_VERSION,
+    apply_final_review,
+)
 from book_translator.publishing.lexicon import merge_lexicon_overrides, normalize_lexicon_records
-from book_translator.publishing.proofread import proofread_chapter
+from book_translator.publishing.proofread import PROOFREAD_STAGE_VERSION, proofread_chapter
 from book_translator.publishing.revision import revise_chapter
 from book_translator.state.workspace import Workspace
 from book_translator.translation.orchestrator import translate_chunks
@@ -400,6 +403,7 @@ def _ensure_proofread_stage(
         {
             "revision_stage": workspace.read_publishing_stage_state("revision").model_dump(),
             "style": config.style,
+            "proofread_stage_version": PROOFREAD_STAGE_VERSION,
         }
     )
     if _stage_index(stage) < _stage_index(config.from_stage):
@@ -468,6 +472,8 @@ async def _ensure_final_review_stage(
         {
             "proofread_stage": workspace.read_publishing_stage_state("proofread").model_dump(),
             "style": config.style,
+            "final_review_stage_version": FINAL_REVIEW_STAGE_VERSION,
+            "pdf_front_matter_version": "publishing-edition-v1",
         }
     )
     required_paths = [
@@ -526,7 +532,11 @@ async def _ensure_final_review_stage(
             max_concurrency=config.max_concurrency,
             max_attempts=config.max_attempts,
         )
-        render_polished_pdf(printable_book, workspace.publishing_final_pdf_path)
+        render_polished_pdf(
+            printable_book,
+            workspace.publishing_final_pdf_path,
+            edition_label="publishing",
+        )
 
     workspace.write_publishing_stage_state(
         stage,

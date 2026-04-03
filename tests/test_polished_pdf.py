@@ -779,3 +779,33 @@ def test_render_polished_pdf_restores_running_headers_after_opening_page(tmp_pat
         or ("第一章：如果你热爱生命，就守护它" in page_texts[index])
         for index in continued_body_pages
     )
+def test_render_polished_pdf_uses_publishing_front_matter(tmp_path: Path) -> None:
+    output_path = tmp_path / "publishing.pdf"
+    book = PrintableBook(
+        book_id="sample-book",
+        title_en="The Book of Elon",
+        title_zh="埃隆之书",
+        author="Eric Jorgenson",
+        source_path=r"H:\\books\\The Book of Elon.pdf",
+        provider="gemini",
+        model="gemini-3.1-flash-lite-preview",
+        estimated_cost_usd=0.12,
+        chapters=[
+            _printable_chapter(
+                index=0,
+                title_en="Part I",
+                title_zh="第一部分",
+                title_kind="part",
+            )
+        ],
+    )
+
+    render_polished_pdf(book, output_path, edition_label="publishing")
+
+    extracted = "\n".join(
+        (PdfReader(output_path).pages[index].extract_text() or "") for index in range(2)
+    )
+    assert "出版级翻译精排版" in extracted
+    assert "正文内容来自出版级翻译终稿" in extracted
+    assert "工程化翻译精排版" not in extracted
+    assert "工程化翻译结果" not in extracted

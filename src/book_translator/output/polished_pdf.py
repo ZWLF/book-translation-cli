@@ -45,6 +45,14 @@ class PrintableBook:
     chapters: list[PrintableChapter] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class EditionFrontMatter:
+    cover_badge: str
+    note_heading: str
+    note_origin: str
+    note_body: str
+
+
 def build_printable_book(
     *,
     manifest: Manifest,
@@ -226,7 +234,12 @@ def _build_printable_book_from_entries(
     )
 
 
-def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
+def render_polished_pdf(
+    book: PrintableBook,
+    output_path: Path,
+    *,
+    edition_label: str = "engineering",
+) -> None:
     try:
         from reportlab.lib import colors
         from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
@@ -279,6 +292,7 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
 
     cover_title_zh = book.title_zh or f"{book.title_en} 简体中文版"
     cover_title_en = book.title_en
+    edition_copy = _edition_front_matter(edition_label)
     cover_author = book.author or "未知作者"
 
     cover_title_style = ParagraphStyle(
@@ -464,15 +478,14 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
     story.append(Spacer(1, 28 * mm))
     story.append(Paragraph(f"{cover_author}", cover_meta_style))
     story.append(Spacer(1, 5 * mm))
-    story.append(Paragraph("工程化翻译精排版", cover_meta_style))
+    story.append(Paragraph(edition_copy.cover_badge, cover_meta_style))
     story.append(PageBreak())
 
-    story.append(Paragraph("版本说明", note_heading_style))
+    story.append(Paragraph(edition_copy.note_heading, note_heading_style))
+    story.append(Paragraph(edition_copy.note_origin, note_body_style))
     story.append(
         Paragraph(
-            "本 PDF 基于已完成的翻译工作区自动重排生成。"
-            "正文内容来自工程化翻译结果，版式经过本地书籍化渲染，"
-            "目标是获得稳定、清晰、适合连续阅读的中文版本，而不是逐页复刻原版英文 PDF 的视觉设计。",
+            edition_copy.note_body,
             note_body_style,
         )
     )
@@ -662,6 +675,31 @@ def render_polished_pdf(book: PrintableBook, output_path: Path) -> None:
 
     doc = BookDocTemplate(str(output_path))
     doc.multiBuild(story)
+
+
+def _edition_front_matter(edition_label: str) -> EditionFrontMatter:
+    if edition_label == "publishing":
+        return EditionFrontMatter(
+            cover_badge="出版级翻译精排版",
+            note_heading="版本说明",
+            note_origin="正文内容来自出版级翻译终稿。",
+            note_body=(
+                "本 PDF 基于已完成的出版级翻译工作区自动重排生成。"
+                "版式经过本地书籍化渲染，"
+                "目标是在保留原书编辑风格线索的前提下，获得稳定、清晰、适合连续阅读的中文版本。"
+            ),
+        )
+
+    return EditionFrontMatter(
+        cover_badge="工程化翻译精排版",
+        note_heading="版本说明",
+        note_origin="正文内容来自工程化翻译结果。",
+        note_body=(
+            "本 PDF 基于已完成的翻译工作区自动重排生成。"
+            "版式经过本地书籍化渲染，"
+            "目标是获得稳定、清晰、适合连续阅读的中文版本，而不是逐页复刻原版英文 PDF 的视觉设计。"
+        ),
+    )
 
 
 def _opening_template_id(chapter: PrintableChapter) -> str:

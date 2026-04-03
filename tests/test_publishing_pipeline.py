@@ -145,3 +145,52 @@ async def test_process_book_publishing_from_stage_revision_skips_draft_and_lexic
     )
 
     assert summary["started_stage"] == "revision"
+
+
+def test_proofread_chapter_normalizes_spacing_and_emits_notes() -> None:
+    chapter = PublishingChapterArtifact(
+        chapter_id="chapter-1",
+        chapter_index=0,
+        title="Sample",
+        text="我在  PayPal  工作。  2002 年，我们 达成了协议 。",
+    )
+
+    final_artifact, notes = proofread_chapter(chapter)
+
+    assert final_artifact.text == "我在 PayPal 工作。2002 年，我们达成了协议。"
+    assert notes
+    assert any(note["type"] == "spacing_normalization" for note in notes)
+
+
+def test_apply_final_review_sorts_and_emits_editorial_log() -> None:
+    chapters = [
+        PublishingChapterArtifact(chapter_id="b", chapter_index=1, title="B", text="Two  words 。"),
+        PublishingChapterArtifact(chapter_id="a", chapter_index=0, title="A", text="One  words 。"),
+    ]
+
+    reviewed, editorial_log = apply_final_review(chapters)
+
+    assert [item.chapter_id for item in reviewed] == ["a", "b"]
+    assert reviewed[0].text == "One words。"
+    assert reviewed[1].text == "Two words。"
+    assert editorial_log
+    assert any(entry["type"] == "whole_book_normalization" for entry in editorial_log)
+
+
+@pytest.mark.asyncio
+async def test_process_book_publishing_reports_proofread_and_editorial_counts(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "sample.epub"
+    _build_sample_epub(input_path)
+
+    summary = await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(provider="openai", model="gpt-4o-mini"),
+        provider=FakeProvider(),
+    )
+
+    assert summary["mode"] == "publishing"
+    assert summary["proofread_notes"] > 0
+    assert summary["editorial_log_entries"] > 0
