@@ -6,7 +6,13 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
-from book_translator.models import Chunk, Manifest, PublishingChapterArtifact, TranslationResult
+from book_translator.models import (
+    Chunk,
+    Manifest,
+    PublishingChapterArtifact,
+    PublishingLayoutAnnotation,
+    TranslationResult,
+)
 
 
 @dataclass(slots=True)
@@ -97,14 +103,17 @@ def build_printable_book_from_artifacts(
     summary: dict[str, Any],
     chapters: list[PublishingChapterArtifact],
     title_overrides: dict[str, str] | None = None,
+    deep_review_decisions: dict[str, Any] | None = None,
 ) -> PrintableBook:
     title_en, author = _parse_title_and_author(_source_stem(manifest.source_path))
+    annotations_by_chapter = _annotations_by_chapter(deep_review_decisions)
     grouped = {
         chapter.chapter_id: {
             "chapter_id": chapter.chapter_id,
             "chapter_index": chapter.chapter_index,
             "source_title": chapter.title,
             "texts": [chapter.text],
+            "annotations": annotations_by_chapter.get(chapter.chapter_id, []),
         }
         for chapter in chapters
     }
@@ -199,6 +208,12 @@ def _build_printable_book_from_entries(
                     continue
 
                 printable_blocks.append(PrintableBlock(kind="paragraph", text=block_text))
+
+        printable_blocks = _apply_deep_review_annotations(
+            chapter_text=combined_text,
+            blocks=printable_blocks,
+            annotations=entry.get("annotations", []),
+        )
 
         if not printable_blocks:
             continue
@@ -452,6 +467,23 @@ def render_polished_pdf(
         rightIndent=0,
         spaceAfter=0,
     )
+    qa_question_style = ParagraphStyle(
+        "QaQuestion",
+        parent=section_heading_style,
+        fontName=fonts["body"],
+        fontSize=10.6,
+        leading=16,
+        textColor=palette["ink"],
+        spaceBefore=5,
+        spaceAfter=3,
+    )
+    qa_answer_style = ParagraphStyle(
+        "QaAnswer",
+        parent=body_style,
+        firstLineIndent=0,
+        leftIndent=0,
+        spaceAfter=6,
+    )
     reference_style = ParagraphStyle(
         "ReferenceZh",
         parent=styles["BodyText"],
@@ -567,6 +599,10 @@ def render_polished_pdf(
                 story.append(Paragraph(block.text, reference_style))
             elif block.kind == "numbered_item":
                 story.append(Paragraph(block.text, numbered_item_style))
+            elif block.kind == "qa_question":
+                story.append(Paragraph(block.text, qa_question_style))
+            elif block.kind == "qa_answer":
+                story.append(Paragraph(block.text, qa_answer_style))
             else:
                 plain_text = _strip_inline_markup(block.text)
                 paragraph_style = (
@@ -748,6 +784,209 @@ def _split_raw_blocks(text: str) -> list[list[str]]:
     return blocks
 
 
+def _annotations_by_chapter(
+    deep_review_decisions: dict[str, Any] | None,
+) -> dict[str, list[PublishingLayoutAnnotation]]:
+    if not isinstance(deep_review_decisions, dict):
+        return {}
+
+    chapters = deep_review_decisions.get("chapters")
+    if not isinstance(chapters, list):
+        return {}
+
+    annotations_by_chapter: dict[str, list[PublishingLayoutAnnotation]] = {}
+    for chapter in chapters:
+        if not isinstance(chapter, dict):
+            continue
+        chapter_id = chapter.get("chapter_id")
+        raw_annotations = chapter.get("annotations")
+        if not isinstance(chapter_id, str) or not isinstance(raw_annotations, list):
+            continue
+        parsed_annotations: list[PublishingLayoutAnnotation] = []
+        for raw_annotation in raw_annotations:
+            if not isinstance(raw_annotation, dict):
+                continue
+            try:
+                parsed_annotations.append(PublishingLayoutAnnotation.model_validate(raw_annotation))
+            except Exception:
+                continue
+        if parsed_annotations:
+            annotations_by_chapter[chapter_id] = parsed_annotations
+    return annotations_by_chapter
+
+
+def _apply_deep_review_annotations(
+    *,
+    chapter_text: str,
+    blocks: list[PrintableBlock],
+    annotations: list[PublishingLayoutAnnotation],
+) -> list[PrintableBlock]:
+    if not annotations:
+        return blocks
+
+    updated_blocks = list(blocks)
+    for annotation in annotations:
+        if annotation.kind == "callout":
+            updated_blocks = _apply_callout_annotation(updated_blocks, annotation)
+        elif annotation.kind == "qa_block":
+            updated_blocks = _apply_qa_annotation(
+                chapter_text=chapter_text,
+                blocks=updated_blocks,
+                annotation=annotation,
+            )
+    return updated_blocks
+
+
+def _apply_callout_annotation(
+    blocks: list[PrintableBlock],
+    annotation: PublishingLayoutAnnotation,
+) -> list[PrintableBlock]:
+    callout_text = str(annotation.payload.get("text", "")).strip()
+    if not callout_text:
+        return blocks
+
+    target = _normalize_annotation_match_text(callout_text)
+    for index, block in enumerate(blocks):
+        if block.kind == "reference":
+            continue
+        block_text = _normalize_annotation_match_text(_strip_inline_markup(block.text))
+        if not block_text:
+            continue
+        if target in block_text or block_text in target:
+            preserved_text = block.text if _contains_inline_markup(block.text) else callout_text
+            blocks[index] = PrintableBlock(kind="callout", text=preserved_text)
+            break
+    return blocks
+
+
+def _apply_qa_annotation(
+    *,
+    chapter_text: str,
+    blocks: list[PrintableBlock],
+    annotation: PublishingLayoutAnnotation,
+) -> list[PrintableBlock]:
+    anchor = str(annotation.payload.get("anchor", "")).strip()
+    qa_blocks = _build_qa_blocks(anchor=anchor or chapter_text, payload=annotation.payload)
+    if not qa_blocks:
+        return blocks
+
+    target = _normalize_annotation_match_text(anchor)
+    for index, block in enumerate(blocks):
+        block_text = _normalize_annotation_match_text(_strip_inline_markup(block.text))
+        if not block_text:
+            continue
+        if target and target not in block_text and block_text not in target:
+            continue
+        remainder = _remove_duplicate_qa_trailing_paragraph(
+            blocks=blocks,
+            replaced_index=index,
+            qa_blocks=qa_blocks,
+        )
+        return [*blocks[:index], *qa_blocks, *remainder]
+    return blocks
+
+
+def _build_qa_blocks(*, anchor: str, payload: dict[str, str | int | bool]) -> list[PrintableBlock]:
+    lines = [line.strip() for line in anchor.splitlines() if line.strip()]
+    if len(lines) < 2:
+        compact_split = _split_compact_qa_anchor(anchor=anchor, payload=payload)
+        if compact_split is None:
+            return []
+        question_line, answer_line = compact_split
+        return [
+            PrintableBlock(kind="qa_question", text=question_line),
+            PrintableBlock(kind="qa_answer", text=answer_line),
+        ]
+
+    question_line = next((line for line in lines if _is_question_marker_line(line)), "")
+    answer_line = next((line for line in lines if _is_answer_marker_line(line)), "")
+    if not question_line or not answer_line:
+        if not _annotation_signals_qa_structure(payload):
+            return []
+        question_line = lines[0]
+        answer_line = lines[1]
+
+    return [
+        PrintableBlock(kind="qa_question", text=question_line),
+        PrintableBlock(kind="qa_answer", text=answer_line),
+    ]
+
+
+def _normalize_annotation_match_text(text: str) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    compact = compact.replace("“", "").replace("”", "").replace('"', "")
+    return _tighten_mixed_text_spacing(compact).replace(" ", "")
+
+
+def _annotation_signals_qa_structure(payload: dict[str, str | int | bool]) -> bool:
+    return "has_question_marker" in payload or "has_answer_marker" in payload
+
+
+def _remove_duplicate_qa_trailing_paragraph(
+    *,
+    blocks: list[PrintableBlock],
+    replaced_index: int,
+    qa_blocks: list[PrintableBlock],
+) -> list[PrintableBlock]:
+    remainder = list(blocks[replaced_index + 1 :])
+    if not remainder:
+        return remainder
+
+    next_block = remainder[0]
+    if next_block.kind != "paragraph":
+        return remainder
+
+    answer_text = _strip_inline_markup(qa_blocks[-1].text)
+    next_text = _strip_inline_markup(next_block.text)
+    if _is_duplicate_qa_trailing_paragraph(answer_text=answer_text, paragraph_text=next_text):
+        return remainder[1:]
+    return remainder
+
+
+def _is_duplicate_qa_trailing_paragraph(*, answer_text: str, paragraph_text: str) -> bool:
+    normalized_answer = _normalize_annotation_match_text(answer_text)
+    normalized_paragraph = _normalize_annotation_match_text(paragraph_text)
+    if not normalized_answer or not normalized_paragraph:
+        return False
+    if normalized_paragraph == normalized_answer:
+        return True
+    return normalized_answer.endswith(normalized_paragraph)
+
+
+def _split_compact_qa_anchor(
+    *,
+    anchor: str,
+    payload: dict[str, str | int | bool],
+) -> tuple[str, str] | None:
+    compact = re.sub(r"\s+", " ", anchor).strip()
+    if not compact or not _annotation_signals_qa_structure(payload):
+        return None
+
+    explicit_marker_match = re.match(
+        r"^\s*((?:Q|Question|问)\s*[:：].+?)\s+((?:A|Answer|答)\s*[:：].+)\s*$",
+        compact,
+        re.IGNORECASE,
+    )
+    if explicit_marker_match:
+        return explicit_marker_match.group(1).strip(), explicit_marker_match.group(2).strip()
+
+    question_break = re.search(r"[?？]", compact)
+    if question_break:
+        question_line = compact[: question_break.end()].strip()
+        answer_line = compact[question_break.end() :].strip()
+        if question_line and answer_line:
+            return question_line, answer_line
+
+    sentence_break = re.search(r"[.!?。！？]", compact)
+    if sentence_break:
+        question_line = compact[: sentence_break.end()].strip()
+        answer_line = compact[sentence_break.end() :].strip()
+        if question_line and answer_line:
+            return question_line, answer_line
+
+    return None
+
+
 def _clean_block_lines(lines: list[str], *, preserve_leading_number: bool = False) -> list[str]:
     cleaned: list[str] = []
     for index, line in enumerate(lines):
@@ -862,6 +1101,10 @@ def _combine_flow_lines(lines: list[str]) -> str:
 
 def _strip_inline_markup(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
+
+
+def _contains_inline_markup(text: str) -> bool:
+    return "<" in text and ">" in text
 
 
 def _extract_trailing_citation_numbers(lines: list[str]) -> tuple[list[str], list[str]]:
@@ -986,6 +1229,14 @@ def _looks_like_callout(lines: list[str], citation_numbers: list[str]) -> bool:
     if _looks_like_chapter_heading(candidate) or _is_book_title(candidate):
         return False
     return True
+
+
+def _is_question_marker_line(text: str) -> bool:
+    return bool(re.match(r"^\s*(?:Q|Question|问)\s*[:：]\s*\S", text, re.IGNORECASE))
+
+
+def _is_answer_marker_line(text: str) -> bool:
+    return bool(re.match(r"^\s*(?:A|Answer|答)\s*[:：]\s*\S", text, re.IGNORECASE))
 
 
 def _is_book_title(text: str) -> bool:

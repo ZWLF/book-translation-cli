@@ -11,7 +11,7 @@ from book_translator.chaptering.detect import detect_chapters
 from book_translator.chaptering.manual_toc import load_manual_toc_titles
 from book_translator.chunking.splitter import split_chapter_into_chunks
 from book_translator.config import PUBLISHING_STAGES, PublishingRunConfig
-from book_translator.models import Manifest, PublishingChapterArtifact
+from book_translator.models import Chapter, Manifest, PublishingChapterArtifact
 from book_translator.output.assembler import assemble_publishing_output_text
 from book_translator.output.polished_pdf import (
     build_printable_book_from_artifacts,
@@ -20,6 +20,10 @@ from book_translator.output.polished_pdf import (
 from book_translator.output.title_enrichment import enrich_missing_titles
 from book_translator.pipeline import _build_provider, _extract_book, _load_mapping
 from book_translator.providers.base import BaseProvider
+from book_translator.publishing.deep_review import (
+    DEEP_REVIEW_STAGE_VERSION,
+    run_deep_review,
+)
 from book_translator.publishing.final_review import (
     FINAL_REVIEW_STAGE_VERSION,
     apply_final_review,
@@ -30,6 +34,8 @@ from book_translator.publishing.revision import revise_chapter
 from book_translator.state.workspace import Workspace
 from book_translator.translation.orchestrator import translate_chunks
 from book_translator.utils import file_fingerprint, slugify
+
+PDF_ANNOTATION_RENDERER_VERSION = "deep-review-pdf-v2"
 
 
 async def process_book_publishing(
@@ -126,8 +132,28 @@ async def process_book_publishing(
             provider=provider,
             summary_metrics=metrics,
         )
+        (
+            deep_review_artifacts,
+            deep_review_findings,
+            deep_review_decisions,
+            deep_review_revised_count,
+        ) = (
+            await _ensure_deep_review_stage(
+                workspace=workspace,
+                manifest=manifest,
+                source_chapters=chapters,
+                final_artifacts=final_artifacts,
+                config=config,
+                provider=provider,
+                summary_metrics=metrics,
+            )
+        )
 
         completed_stage = config.to_stage
+        if _stage_index("deep-review") > _stage_index(config.to_stage):
+            deep_review_findings = []
+            deep_review_decisions = {}
+            deep_review_revised_count = 0
         if _stage_index("final-review") > _stage_index(config.to_stage):
             editorial_log = []
         if _stage_index("proofread") > _stage_index(config.to_stage):
@@ -157,6 +183,13 @@ async def process_book_publishing(
             "editorial_log_entries": len(editorial_log),
             "proofread_notes": len(proofread_notes),
             "decision_count": len(decisions),
+            "deep_review_findings": len(deep_review_findings),
+            "deep_review_revised_chapters": deep_review_revised_count,
+            "deep_review_decisions": len(
+                deep_review_decisions.get("chapters", [])
+                if isinstance(deep_review_decisions, dict)
+                else []
+            ),
         }
         workspace.write_publishing_summary(summary)
         return summary
@@ -284,8 +317,15 @@ def _ensure_lexicon_stage(
     if _stage_index(stage) < _stage_index(config.from_stage):
         glossary = _load_dict_file(workspace.publishing_glossary_path)
         names = _load_dict_file(workspace.publishing_names_path)
-        decisions = workspace.read_publishing_jsonl(workspace.publishing_decisions_path)
-        if not glossary and not names and not decisions:
+        decisions = _load_json_array(workspace.publishing_decisions_path)
+        if not any(
+            path.exists()
+            for path in (
+                workspace.publishing_glossary_path,
+                workspace.publishing_names_path,
+                workspace.publishing_decisions_path,
+            )
+        ):
             raise ValueError("Lexicon artifacts are missing. Re-run from the lexicon stage.")
         return glossary, names, decisions
 
@@ -304,7 +344,7 @@ def _ensure_lexicon_stage(
         return (
             _load_dict_file(workspace.publishing_glossary_path),
             _load_dict_file(workspace.publishing_names_path),
-            workspace.read_publishing_jsonl(workspace.publishing_decisions_path),
+            _load_json_array(workspace.publishing_decisions_path),
         )
 
     _clear_stage_and_downstream(workspace, stage)
@@ -468,13 +508,9 @@ async def _ensure_final_review_stage(
     if _stage_index(stage) > _stage_index(config.to_stage):
         return [], []
 
-    fingerprint = _fingerprint_payload(
-        {
-            "proofread_stage": workspace.read_publishing_stage_state("proofread").model_dump(),
-            "style": config.style,
-            "final_review_stage_version": FINAL_REVIEW_STAGE_VERSION,
-            "pdf_front_matter_version": "publishing-edition-v6",
-        }
+    fingerprint = _final_review_stage_fingerprint(
+        workspace=workspace,
+        config=config,
     )
     required_paths = [
         workspace.publishing_final_chapters_path,
@@ -502,50 +538,125 @@ async def _ensure_final_review_stage(
         workspace.publishing_final_chapters_path,
         [artifact.model_dump() for artifact in artifacts],
     )
-    workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
-    workspace.publishing_final_text_path.write_text(
-        assemble_publishing_output_text(artifacts),
-        encoding="utf-8",
-    )
     workspace._write_publishing_json(workspace.publishing_editorial_log_path, editorial_log)
-
-    if config.render_pdf:
-        printable_book = build_printable_book_from_artifacts(
-            manifest=manifest,
-            summary={
-                "estimated_cost_usd": summary_metrics["estimated_cost_usd"],
-            },
-            chapters=artifacts,
-            title_overrides=workspace.read_title_translations(),
-        )
-        api_key: str | None = None
-        try:
-            api_key = config.resolved_api_key() if provider is None else None
-        except ValueError:
-            api_key = None
-        printable_book = await enrich_missing_titles(
-            book=printable_book,
-            workspace=workspace,
-            provider_name=config.provider,
-            model=config.resolved_model(),
-            api_key=api_key,
-            max_concurrency=config.max_concurrency,
-            max_attempts=config.max_attempts,
-        )
-        render_polished_pdf(
-            printable_book,
-            workspace.publishing_final_pdf_path,
-            edition_label="publishing",
-        )
+    await _rebuild_stable_publishing_outputs(
+        workspace=workspace,
+        manifest=manifest,
+        chapters=artifacts,
+        config=config,
+        provider=provider,
+        summary_metrics=summary_metrics,
+    )
+    completed_fingerprint = _final_review_stage_fingerprint(
+        workspace=workspace,
+        config=config,
+    )
 
     workspace.write_publishing_stage_state(
         stage,
         {
-            "fingerprint": fingerprint,
+            "fingerprint": completed_fingerprint,
             "status": "complete",
         },
     )
     return artifacts, editorial_log
+
+
+async def _ensure_deep_review_stage(
+    *,
+    workspace: Workspace,
+    manifest: Manifest,
+    source_chapters: list[Chapter],
+    final_artifacts: list[PublishingChapterArtifact],
+    config: PublishingRunConfig,
+    provider: BaseProvider | None,
+    summary_metrics: dict[str, float | int],
+) -> tuple[
+    list[PublishingChapterArtifact],
+    list[dict[str, object]],
+    dict[str, object],
+    int,
+]:
+    stage = "deep-review"
+    if _stage_index(stage) > _stage_index(config.to_stage):
+        return [], [], {}, 0
+    if not final_artifacts and not workspace.publishing_final_chapters_path.exists():
+        raise ValueError("Final-review artifacts are missing. Re-run from the final-review stage.")
+    final_review_state = workspace.read_publishing_stage_state("final-review")
+    if final_review_state is None:
+        raise ValueError("Final-review state is missing. Re-run from the final-review stage.")
+
+    fingerprint = _deep_review_stage_fingerprint(
+        workspace=workspace,
+        final_review_state=final_review_state,
+        config=config,
+    )
+    required_paths = [
+        workspace.publishing_deep_review_findings_path,
+        workspace.publishing_deep_review_chapters_path,
+        workspace.publishing_deep_review_decisions_path,
+        workspace.publishing_final_text_path,
+    ]
+    if config.render_pdf:
+        required_paths.append(workspace.publishing_final_pdf_path)
+
+    if not _should_run_stage(
+        workspace=workspace,
+        stage=stage,
+        fingerprint=fingerprint,
+        config=config,
+        required_paths=required_paths,
+    ):
+        decisions = _load_json_object(workspace.publishing_deep_review_decisions_path)
+        return (
+            _load_publishing_artifacts(workspace.publishing_deep_review_chapters_path, workspace),
+            workspace.read_publishing_jsonl(workspace.publishing_deep_review_findings_path),
+            decisions,
+            int(decisions.get("revised_chapter_count", 0)),
+        )
+
+    _clear_stage_and_downstream(workspace, stage)
+    result = run_deep_review(source_chapters=source_chapters, final_artifacts=final_artifacts)
+    workspace.write_publishing_jsonl(
+        workspace.publishing_deep_review_findings_path,
+        [finding.model_dump() for finding in result.findings],
+    )
+    workspace.write_publishing_jsonl(
+        workspace.publishing_deep_review_chapters_path,
+        [artifact.model_dump() for artifact in result.revised_chapters],
+    )
+    workspace._write_publishing_json(
+        workspace.publishing_deep_review_decisions_path,
+        result.decisions,
+    )
+    await _rebuild_stable_publishing_outputs(
+        workspace=workspace,
+        manifest=manifest,
+        chapters=final_artifacts,
+        deep_review_chapters=result.revised_chapters,
+        deep_review_decisions=result.decisions,
+        config=config,
+        provider=provider,
+        summary_metrics=summary_metrics,
+    )
+    completed_fingerprint = _deep_review_stage_fingerprint(
+        workspace=workspace,
+        final_review_state=final_review_state,
+        config=config,
+    )
+    workspace.write_publishing_stage_state(
+        stage,
+        {
+            "fingerprint": completed_fingerprint,
+            "status": "complete",
+        },
+    )
+    return (
+        result.revised_chapters,
+        [finding.model_dump() for finding in result.findings],
+        result.decisions,
+        result.revised_chapter_count,
+    )
 
 
 def _should_run_stage(
@@ -600,6 +711,15 @@ def _load_json_array(path: Path) -> list[dict[str, object]]:
     return [item for item in data if isinstance(item, dict)]
 
 
+def _load_json_object(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
 def _build_chapter_artifacts_from_translations(
     *,
     chapters: list[Any],
@@ -648,3 +768,112 @@ def _fingerprint_payload(payload: dict[str, object]) -> str:
 
 def _stage_index(stage: str) -> int:
     return PUBLISHING_STAGES.index(stage)
+
+
+def _title_translations_fingerprint(workspace: Workspace) -> str:
+    return _fingerprint_payload(workspace.read_title_translations())
+
+
+def _final_review_stage_fingerprint(
+    *,
+    workspace: Workspace,
+    config: PublishingRunConfig,
+) -> str:
+    return _fingerprint_payload(
+        {
+            "proofread_stage": workspace.read_publishing_stage_state("proofread").model_dump(),
+            "style": config.style,
+            "final_review_stage_version": FINAL_REVIEW_STAGE_VERSION,
+            "pdf_front_matter_version": "publishing-edition-v6",
+            "pdf_annotation_renderer_version": PDF_ANNOTATION_RENDERER_VERSION,
+            "title_translations_fingerprint": _title_translations_fingerprint(workspace),
+        }
+    )
+
+
+def _deep_review_stage_fingerprint(
+    *,
+    workspace: Workspace,
+    final_review_state: Any,
+    config: PublishingRunConfig,
+) -> str:
+    return _fingerprint_payload(
+        {
+            "final_review_stage": final_review_state.model_dump(),
+            "style": config.style,
+            "deep_review_stage_version": DEEP_REVIEW_STAGE_VERSION,
+            "pdf_annotation_renderer_version": PDF_ANNOTATION_RENDERER_VERSION,
+            "title_translations_fingerprint": _title_translations_fingerprint(workspace),
+            "deep_review_decisions_fingerprint": _deep_review_decisions_fingerprint(workspace),
+        }
+    )
+
+
+def _deep_review_decisions_fingerprint(workspace: Workspace) -> str:
+    if not workspace.publishing_deep_review_decisions_path.exists():
+        return "missing"
+    return _fingerprint_payload(
+        _load_json_object(workspace.publishing_deep_review_decisions_path)
+    )
+
+
+async def _rebuild_stable_publishing_outputs(
+    *,
+    workspace: Workspace,
+    manifest: Manifest,
+    chapters: list[PublishingChapterArtifact],
+    config: PublishingRunConfig,
+    provider: BaseProvider | None,
+    summary_metrics: dict[str, float | int],
+    deep_review_chapters: list[PublishingChapterArtifact] | None = None,
+    deep_review_decisions: dict[str, object] | None = None,
+) -> None:
+    workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
+    final_text = assemble_publishing_output_text(
+        chapters,
+        deep_review_chapters=deep_review_chapters,
+    )
+    temp_text_path = workspace.publishing_final_text_path.with_suffix(".txt.tmp")
+    temp_pdf_path = workspace.publishing_final_pdf_path.with_suffix(".pdf.tmp")
+    temp_text_path.write_text(final_text, encoding="utf-8")
+
+    if not config.render_pdf:
+        temp_text_path.replace(workspace.publishing_final_text_path)
+        return
+
+    printable_book = build_printable_book_from_artifacts(
+        manifest=manifest,
+        summary={
+            "estimated_cost_usd": summary_metrics["estimated_cost_usd"],
+        },
+        chapters=deep_review_chapters or chapters,
+        title_overrides=workspace.read_title_translations(),
+        deep_review_decisions=deep_review_decisions,
+    )
+    api_key: str | None = None
+    try:
+        api_key = config.resolved_api_key() if provider is None else None
+    except ValueError:
+        api_key = None
+    printable_book = await enrich_missing_titles(
+        book=printable_book,
+        workspace=workspace,
+        provider_name=config.provider,
+        model=config.resolved_model(),
+        api_key=api_key,
+        max_concurrency=config.max_concurrency,
+        max_attempts=config.max_attempts,
+    )
+    try:
+        render_polished_pdf(
+            printable_book,
+            temp_pdf_path,
+            edition_label="publishing",
+        )
+        temp_text_path.replace(workspace.publishing_final_text_path)
+        temp_pdf_path.replace(workspace.publishing_final_pdf_path)
+    finally:
+        if temp_text_path.exists():
+            temp_text_path.unlink()
+        if temp_pdf_path.exists():
+            temp_pdf_path.unlink()

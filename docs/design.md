@@ -26,12 +26,13 @@ This repository implements two translation workflows on one shared foundation:
 
 - Reuses the same extraction, chaptering, chunking, provider, and PDF infrastructure
 - Keeps publishing artifacts under `out/<book>/publishing/` so engineering outputs stay isolated
-- Runs five explicit stages:
+- Runs six explicit stages:
   - `draft`
   - `lexicon`
   - `revision`
   - `proofread`
   - `final-review`
+  - `deep-review`
 - Produces auditable editorial artifacts:
   - `draft/chapters.jsonl`
   - `lexicon/glossary.json`
@@ -43,6 +44,9 @@ This repository implements two translation workflows on one shared foundation:
   - `final/final_chapters.jsonl`
   - `final/translated.txt`
   - `final/translated.pdf`
+  - `deep_review/findings.jsonl` when `--to-stage deep-review` runs
+  - `deep_review/revised_chapters.jsonl` when `--to-stage deep-review` runs
+  - `deep_review/decisions.json` when `--to-stage deep-review` runs
   - `editorial_log.json`
   - `run_summary.json`
 - Supports stage-aware resume via `--from-stage` / `--to-stage`
@@ -54,7 +58,7 @@ This repository implements two translation workflows on one shared foundation:
 - Fidelity first, elegance second
 - Formal, restrained Chinese prose
 - Whole-book term and proper-name consistency
-- Automated proofreading and whole-book final review
+- Automated proofreading, whole-book final review, and source-aware deep review before final acceptance
 - No fiction-first rewriting and no human review UI in this phase
 
 ## Version 1 Non-Goals

@@ -24,6 +24,7 @@ PUBLISHING_STAGES = (
     "revision",
     "proofread",
     "final-review",
+    "deep-review",
 )
 
 
@@ -76,8 +77,22 @@ class RunConfig(BaseModel):
 
 class PublishingRunConfig(RunConfig):
     style: Literal["non-fiction-publishing"] = "non-fiction-publishing"
-    from_stage: Literal["draft", "lexicon", "revision", "proofread", "final-review"] = "draft"
-    to_stage: Literal["draft", "lexicon", "revision", "proofread", "final-review"] = (
+    from_stage: Literal[
+        "draft",
+        "lexicon",
+        "revision",
+        "proofread",
+        "final-review",
+        "deep-review",
+    ] = "draft"
+    to_stage: Literal[
+        "draft",
+        "lexicon",
+        "revision",
+        "proofread",
+        "final-review",
+        "deep-review",
+    ] = (
         "final-review"
     )
     mode: Literal["publishing"] = "publishing"
