@@ -210,12 +210,10 @@ async def test_process_book_publishing_writes_stage_artifacts(tmp_path: Path) ->
     book_dir = tmp_path / "out" / "sample" / "publishing"
     assert (book_dir / "draft" / "draft.txt").exists()
     assert (book_dir / "draft" / "chapters.jsonl").exists()
-    assert (book_dir / "assets" / "manifest.json").exists()
     assert (book_dir / "lexicon" / "glossary.json").exists()
     assert (book_dir / "final" / "translated.txt").exists()
     assert (book_dir / "final" / "translated.pdf").exists()
     assert (book_dir / "editorial_log.json").exists()
-    assert summary["asset_count"] == 0
     assert summary["mode"] == "publishing"
 
 
@@ -391,6 +389,13 @@ async def test_process_book_publishing_runs_deep_review_and_rebuilds_final_text(
 
     book_dir = tmp_path / "out" / "deep-review" / "publishing"
     final_text = (book_dir / "final" / "translated.txt").read_text(encoding="utf-8")
+    deep_review_rows = [
+        json.loads(line)
+        for line in (book_dir / "deep_review" / "revised_chapters.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
 
     assert summary["completed_stage"] == "deep-review"
     assert (book_dir / "deep_review" / "findings.jsonl").exists()
@@ -405,6 +410,8 @@ async def test_process_book_publishing_runs_deep_review_and_rebuilds_final_text(
     assert "2. 第二条原则。" in final_text
     assert "3. 第三条原则。" in final_text
     assert "First principle." not in final_text
+    assert deep_review_rows
+    assert "blocks" in deep_review_rows[0]
 
 
 @pytest.mark.asyncio
@@ -693,7 +700,11 @@ async def test_process_book_publishing_reports_only_changed_deep_review_chapters
         provider=FailIfCalledProvider(),
     )
 
+    final_chapters_rows = final_chapters_path.read_text(encoding="utf-8")
+
     assert summary["deep_review_revised_chapters"] == 1
+    assert "Draft  text with double spaces." not in final_chapters_rows
+    assert "Draft text with double spaces." in final_chapters_rows
 
 
 @pytest.mark.asyncio

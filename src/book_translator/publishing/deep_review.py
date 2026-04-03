@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from book_translator.models import (
     Chapter,
     PublishingAuditFinding,
+    PublishingBlock,
     PublishingChapterArtifact,
     StructuredPublishingBook,
     StructuredPublishingChapter,
@@ -63,17 +64,25 @@ def run_deep_review(
     annotation_count = 0
     revised_count = 0
     confirmation_findings: list[PublishingAuditFinding] = []
+    use_consensus_review = audit_depth == "consensus" and enable_cross_review
 
     for artifact in sorted(final_artifacts, key=lambda item: item.chapter_index):
         source_chapter = source_by_chapter_id.get(artifact.chapter_id) or source_by_index.get(
             artifact.chapter_index
         )
         if source_chapter is None:
-            structured_chapter = apply_structured_editorial_repairs(
-                chapter=artifact,
-                source_text=artifact.text,
-                findings=[],
+            missing_source_finding = PublishingAuditFinding(
+                chapter_id=artifact.chapter_id,
+                finding_type="missing_source_chapter",
+                severity="high",
+                source_excerpt="",
+                target_excerpt=artifact.text[:180],
+                reason="Source chapter could not be matched during deep review.",
+                auto_fixable=False,
+                agent_role="audit",
             )
+            source_findings.append(missing_source_finding)
+            structured_chapter = _build_passthrough_structured_chapter(artifact)
             structured_chapters.append(structured_chapter)
             final_text = assemble_structured_chapter_text(structured_chapter)
             revised_artifact = artifact.model_copy(update={"text": final_text})
@@ -85,7 +94,7 @@ def run_deep_review(
                     "source_finding_count": 0,
                     "review_finding_count": 0,
                     "disputed_count": 0,
-                    "confirmation_finding_count": 0,
+                    "confirmation_finding_count": 1,
                     "revised": False,
                     "annotations": [],
                     "status": "missing_source_chapter",
@@ -112,7 +121,7 @@ def run_deep_review(
         )
         structured_chapter_body = assemble_structured_chapter_text(structured_chapter)
 
-        if enable_cross_review:
+        if use_consensus_review:
             chapter_review_findings = audit_source_against_target(
                 chapter_id=artifact.chapter_id,
                 source_text=source_chapter.text,
@@ -122,17 +131,25 @@ def run_deep_review(
             chapter_review_findings = []
         review_findings.extend(chapter_review_findings)
 
-        consensus = merge_consensus_findings(
-            audit_findings=chapter_source_findings,
-            review_findings=chapter_review_findings,
-        )
-        chapter_arbiter_findings = _resolve_arbitration_findings(consensus)
-        arbiter_findings.extend(chapter_arbiter_findings)
-
-        repair_candidates = arbiter_fix_candidates(
-            consensus=consensus,
-            arbiter_findings=chapter_arbiter_findings,
-        )
+        if use_consensus_review:
+            consensus = merge_consensus_findings(
+                audit_findings=chapter_source_findings,
+                review_findings=chapter_review_findings,
+            )
+            chapter_arbiter_findings = _resolve_arbitration_findings(consensus)
+            arbiter_findings.extend(chapter_arbiter_findings)
+            repair_candidates = arbiter_fix_candidates(
+                consensus=consensus,
+                arbiter_findings=chapter_arbiter_findings,
+            )
+        else:
+            consensus = PublishingFindingConsensusResult()
+            chapter_arbiter_findings = []
+            repair_candidates = [
+                finding
+                for finding in chapter_source_findings
+                if finding.auto_fixable
+            ]
         final_text = structured_chapter_body
         if repair_candidates:
             repaired_text = apply_editorial_repairs(
@@ -183,19 +200,28 @@ def run_deep_review(
             }
         )
 
-    consensus = merge_consensus_findings(
-        audit_findings=source_findings,
-        review_findings=review_findings,
-    )
-    if enable_cross_review:
+    if use_consensus_review:
+        consensus = merge_consensus_findings(
+            audit_findings=source_findings,
+            review_findings=review_findings,
+        )
         arbiter_findings = _resolve_arbitration_findings(consensus)
+    else:
+        consensus = PublishingFindingConsensusResult()
+        review_findings = []
+        arbiter_findings = []
 
     structured_book = build_structured_book(title="", chapters=structured_chapters)
+    missing_source_count = sum(
+        1
+        for finding in source_findings
+        if finding.finding_type == "missing_source_chapter"
+    )
     final_report = {
         "stage": "deep-review",
         "stage_version": DEEP_REVIEW_STAGE_VERSION,
         "audit_depth": audit_depth,
-        "cross_review_enabled": enable_cross_review,
+        "cross_review_enabled": use_consensus_review,
         "source_finding_count": len(source_findings),
         "review_finding_count": len(review_findings),
         "arbiter_finding_count": len(arbiter_findings),
@@ -205,7 +231,7 @@ def run_deep_review(
         "repair_passes": 1,
         "confirmation_passes": 1,
         "confirmation_finding_count": len(confirmation_findings),
-        "unresolved_count": len(confirmation_findings),
+        "unresolved_count": len(confirmation_findings) + missing_source_count,
         "revised_chapter_count": revised_count,
         "annotation_count": annotation_count,
     }
@@ -243,8 +269,49 @@ def _resolve_arbitration_findings(
 ) -> list[PublishingAuditFinding]:
     findings: list[PublishingAuditFinding] = []
     for item in build_arbitration_queue(consensus.disputed):
-        preferred = item.review_finding or item.audit_finding
+        preferred = _arbiter_decide(item)
         if preferred is None or not preferred.auto_fixable:
             continue
         findings.append(preferred.model_copy(update={"agent_role": "arbiter"}))
     return findings
+
+
+def _arbiter_decide(item: object) -> PublishingAuditFinding | None:
+    audit_finding = getattr(item, "audit_finding", None)
+    review_finding = getattr(item, "review_finding", None)
+    if audit_finding is None and review_finding is None:
+        return None
+    if audit_finding is None:
+        return review_finding
+    if review_finding is None:
+        return audit_finding
+
+    if (
+        audit_finding.finding_type == review_finding.finding_type
+        and audit_finding.chapter_id == review_finding.chapter_id
+        and audit_finding.block_id == review_finding.block_id
+        and audit_finding.source_signature == review_finding.source_signature
+    ):
+        if review_finding.auto_fixable and review_finding.confidence >= audit_finding.confidence:
+            return review_finding
+        return audit_finding
+    return None
+
+
+def _build_passthrough_structured_chapter(
+    artifact: PublishingChapterArtifact,
+) -> StructuredPublishingChapter:
+    return StructuredPublishingChapter(
+        chapter_id=artifact.chapter_id,
+        chapter_index=artifact.chapter_index,
+        source_title=artifact.title,
+        translated_title=artifact.title,
+        blocks=[
+            PublishingBlock(
+                block_id=f"{artifact.chapter_id}-block-1",
+                kind="paragraph",
+                text=artifact.text.strip(),
+                order_index=1,
+            )
+        ],
+    )

@@ -41,12 +41,24 @@ def assemble_output_text(
 
 
 def assemble_structured_chapter_text(chapter: StructuredPublishingChapter) -> str:
-    parts: list[str] = []
-    for block in sorted(chapter.blocks, key=lambda item: item.order_index):
-        rendered = _render_structured_block(block)
-        if rendered:
-            parts.append(rendered)
-    return "\n\n".join(parts).strip()
+    rendered_blocks = [
+        (block, _render_structured_block(block))
+        for block in sorted(chapter.blocks, key=lambda item: item.order_index)
+    ]
+    rendered_blocks = [
+        (block, rendered) for block, rendered in rendered_blocks if rendered
+    ]
+    if not rendered_blocks:
+        return ""
+
+    parts: list[str] = [rendered_blocks[0][1]]
+    for index in range(1, len(rendered_blocks)):
+        previous_block, _ = rendered_blocks[index - 1]
+        current_block, current_text = rendered_blocks[index]
+        separator = "\n" if _should_tightly_join(previous_block, current_block) else "\n\n"
+        parts.append(separator)
+        parts.append(current_text)
+    return "".join(parts).strip()
 
 
 def assemble_structured_publishing_output_text(
@@ -92,6 +104,15 @@ def _render_structured_block(block: PublishingBlock) -> str:
     }:
         return block.text.strip()
     return block.text.strip()
+
+
+def _should_tightly_join(previous: PublishingBlock, current: PublishingBlock) -> bool:
+    list_kinds = {"ordered_item", "unordered_item"}
+    if previous.kind in list_kinds and current.kind in list_kinds:
+        return True
+    if previous.kind == "qa_question" and current.kind == "qa_answer":
+        return True
+    return False
 
 
 def _extract_ordered_marker(source_anchor: str) -> str:

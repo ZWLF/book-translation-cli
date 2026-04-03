@@ -11,9 +11,15 @@ from book_translator.chaptering.detect import detect_chapters
 from book_translator.chaptering.manual_toc import load_manual_toc_titles
 from book_translator.chunking.splitter import split_chapter_into_chunks
 from book_translator.config import PUBLISHING_STAGES, PublishingRunConfig
-from book_translator.models import Chapter, Manifest, PublishingChapterArtifact
+from book_translator.models import (
+    Chapter,
+    Manifest,
+    PublishingChapterArtifact,
+    StructuredPublishingChapter,
+)
 from book_translator.output.assembler import (
     assemble_publishing_output_text,
+    assemble_structured_chapter_text,
     assemble_structured_publishing_output_text,
 )
 from book_translator.output.polished_pdf import (
@@ -23,7 +29,6 @@ from book_translator.output.polished_pdf import (
 from book_translator.output.title_enrichment import enrich_missing_titles
 from book_translator.pipeline import _build_provider, _extract_book, _load_mapping
 from book_translator.providers.base import BaseProvider
-from book_translator.publishing.assets import extract_source_assets, write_asset_manifest
 from book_translator.publishing.deep_review import (
     DEEP_REVIEW_STAGE_VERSION,
     run_deep_review,
@@ -35,7 +40,6 @@ from book_translator.publishing.final_review import (
 from book_translator.publishing.lexicon import merge_lexicon_overrides, normalize_lexicon_records
 from book_translator.publishing.proofread import PROOFREAD_STAGE_VERSION, proofread_chapter
 from book_translator.publishing.revision import revise_chapter
-from book_translator.publishing.structure import build_structured_book, build_structured_chapter
 from book_translator.state.workspace import Workspace
 from book_translator.translation.orchestrator import translate_chunks
 from book_translator.utils import file_fingerprint, slugify
@@ -69,14 +73,6 @@ async def process_book_publishing(
     _initialize_publishing_manifest(workspace=workspace, manifest=manifest, config=config)
 
     extracted = _extract_book(input_path)
-    source_assets = extract_source_assets(
-        source_path=input_path,
-        output_dir=workspace.publishing_assets_images_dir,
-    )
-    write_asset_manifest(
-        assets=source_assets,
-        manifest_path=workspace.publishing_assets_manifest_path,
-    )
     manual_titles = (
         load_manual_toc_titles(config.manual_toc_path)
         if config.manual_toc_path and config.chapter_strategy == "manual"
@@ -202,11 +198,6 @@ async def process_book_publishing(
                 deep_review_decisions.get("chapters", [])
                 if isinstance(deep_review_decisions, dict)
                 else []
-            ),
-            "asset_count": len(source_assets),
-            "extracted_asset_count": sum(asset.status == "extracted" for asset in source_assets),
-            "caption_only_asset_count": sum(
-                asset.status == "caption-only" for asset in source_assets
             ),
         }
         workspace.write_publishing_summary(summary)
@@ -634,8 +625,12 @@ async def _ensure_deep_review_stage(
         required_paths=required_paths,
     ):
         decisions = _load_json_object(workspace.publishing_deep_review_decisions_path)
+        structured_chapters = _load_structured_publishing_chapters(
+            workspace.publishing_deep_review_chapters_path,
+            workspace,
+        )
         return (
-            _load_publishing_artifacts(workspace.publishing_deep_review_chapters_path, workspace),
+            _structured_chapters_to_artifacts(structured_chapters),
             workspace.read_publishing_jsonl(workspace.publishing_deep_review_findings_path),
             decisions,
             int(decisions.get("revised_chapter_count", 0)),
@@ -670,6 +665,10 @@ async def _ensure_deep_review_stage(
     )
     workspace.write_publishing_jsonl(
         workspace.publishing_deep_review_chapters_path,
+        [chapter.model_dump() for chapter in result.structured_book.chapters],
+    )
+    workspace.write_publishing_jsonl(
+        workspace.publishing_final_chapters_path,
         [artifact.model_dump() for artifact in result.revised_chapters],
     )
     workspace._write_publishing_json(
@@ -738,6 +737,30 @@ def _load_publishing_artifacts(
     return [
         PublishingChapterArtifact.model_validate(record)
         for record in workspace.read_publishing_jsonl(path)
+    ]
+
+
+def _load_structured_publishing_chapters(
+    path: Path,
+    workspace: Workspace,
+) -> list[StructuredPublishingChapter]:
+    return [
+        StructuredPublishingChapter.model_validate(record)
+        for record in workspace.read_publishing_jsonl(path)
+    ]
+
+
+def _structured_chapters_to_artifacts(
+    chapters: list[StructuredPublishingChapter],
+) -> list[PublishingChapterArtifact]:
+    return [
+        PublishingChapterArtifact(
+            chapter_id=chapter.chapter_id,
+            chapter_index=chapter.chapter_index,
+            title=chapter.translated_title or chapter.source_title or "",
+            text=assemble_structured_chapter_text(chapter),
+        )
+        for chapter in sorted(chapters, key=lambda item: item.chapter_index)
     ]
 
 
@@ -850,6 +873,8 @@ def _deep_review_stage_fingerprint(
             "final_review_stage": final_review_state.model_dump(),
             "final_chapters_fingerprint": _final_chapters_fingerprint(workspace),
             "style": config.style,
+            "audit_depth": config.audit_depth,
+            "enable_cross_review": config.enable_cross_review,
             "deep_review_stage_version": DEEP_REVIEW_STAGE_VERSION,
             "pdf_annotation_renderer_version": PDF_ANNOTATION_RENDERER_VERSION,
             "title_translations_fingerprint": _title_translations_fingerprint(workspace),
@@ -887,11 +912,10 @@ async def _rebuild_stable_publishing_outputs(
     deep_review_decisions: dict[str, object] | None = None,
 ) -> None:
     workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
-    structured_book = _build_structured_publishing_book(
-        chapters=deep_review_chapters or chapters,
-        structured_book=deep_review_book,
-    )
-    final_text = assemble_structured_publishing_output_text(structured_book)
+    if deep_review_book is not None:
+        final_text = assemble_structured_publishing_output_text(deep_review_book)
+    else:
+        final_text = assemble_publishing_output_text(chapters)
     temp_text_path = workspace.publishing_final_text_path.with_suffix(".txt.tmp")
     temp_pdf_path = workspace.publishing_final_pdf_path.with_suffix(".pdf.tmp")
     temp_text_path.write_text(final_text, encoding="utf-8")
@@ -936,23 +960,3 @@ async def _rebuild_stable_publishing_outputs(
             temp_text_path.unlink()
         if temp_pdf_path.exists():
             temp_pdf_path.unlink()
-
-
-def _build_structured_publishing_book(
-    *,
-    chapters: list[PublishingChapterArtifact],
-    structured_book: object | None,
-) -> object:
-    if structured_book is not None:
-        return structured_book
-
-    structured_chapters = [
-        build_structured_chapter(
-            artifact=chapter,
-            source_text=chapter.text,
-            source_assets=[],
-            source_title=chapter.title,
-        )
-        for chapter in sorted(chapters, key=lambda item: item.chapter_index)
-    ]
-    return build_structured_book(title="", chapters=structured_chapters)
