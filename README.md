@@ -5,7 +5,7 @@ Command-line tool for translating text-based PDF and EPUB books into Simplified 
 ## Modes
 
 - `engineering`: accurate, resumable, cost-aware translation for bulk processing
-- `publishing`: quality-first non-fiction translation with staged revision, proofreading, and final review
+- `publishing`: quality-first non-fiction translation with staged revision, proofreading, final review, and source-aware deep review
 
 The top-level command remains an alias to `engineering` for compatibility.
 
@@ -19,7 +19,7 @@ The top-level command remains an alias to `engineering` for compatibility.
 - Resume unfinished runs
 - Write `translated.txt`, `error_log.json`, and `run_summary.json`
 - Render a polished Chinese reading PDF as `translated.pdf`
-- Add a staged publishing workflow with draft, lexicon, revision, proofread, and final-review outputs
+- Add a staged publishing workflow with draft, lexicon, revision, proofread, final-review, and deep-review outputs
 - Rasterize rendered PDF pages into PNG screenshots for visual QA
 
 ## Installation
@@ -73,6 +73,12 @@ To resume only the later editorial stages:
 
 ```bash
 book-translator publishing --input ./books --output ./out --from-stage revision --to-stage final-review
+```
+
+To rerun the final publishing QA sweep from `final-review` through the source-aware `deep-review` stage and rebuild the final TXT/PDF:
+
+```bash
+book-translator publishing --input ./books --output ./out --from-stage final-review --to-stage deep-review --render-pdf
 ```
 
 To stop after lexicon creation for inspection:
@@ -137,6 +143,12 @@ Each processed book writes a dedicated workspace directory under the output root
 - `publishing/qa/pages/page-###.png`
 - `publishing/qa/qa_summary.json`
 
+Additional artifacts when `--to-stage deep-review` runs:
+
+- `publishing/deep_review/findings.jsonl`
+- `publishing/deep_review/revised_chapters.jsonl`
+- `publishing/deep_review/decisions.json`
+
 ## CLI Options
 
 ### Shared translation options
@@ -159,7 +171,7 @@ Each processed book writes a dedicated workspace directory under the output root
 ### Publishing-only options
 
 - `--style`: publishing style profile, currently `non-fiction-publishing`
-- `--from-stage`: `draft`, `lexicon`, `revision`, `proofread`, or `final-review`
+- `--from-stage`: `draft`, `lexicon`, `revision`, `proofread`, `final-review`, or `deep-review`
 - `--to-stage`: stop after a specific publishing stage
 
 Publishing stage semantics:
@@ -169,6 +181,7 @@ Publishing stage semantics:
 - `revision`: chapter-level revision against the lexicon
 - `proofread`: independent proofreading pass with notes
 - `final-review`: whole-book consistency pass plus final text/PDF output
+- `deep-review`: source-aware acceptance pass that emits findings/revised chapters and then rebuilds the final text/PDF
 
 ## Validation
 
