@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from book_translator.publishing import DraftRequest, StyleProfile, build_draft_request, get_style_profile
+from book_translator.publishing import (
+    DraftRequest,
+    StyleProfile,
+    build_draft_request,
+    get_style_profile,
+)
 
 
 def test_get_style_profile_returns_unknown_style_error() -> None:
@@ -24,10 +29,42 @@ def test_get_style_profile_returns_independent_copies() -> None:
 @pytest.mark.parametrize(
     ("payload", "field_name"),
     [
-        ({"name": "", "voice": "voice", "sentence_rules": ["rule"], "prohibited_patterns": ["pattern"]}, "name"),
-        ({"name": "style", "voice": "", "sentence_rules": ["rule"], "prohibited_patterns": ["pattern"]}, "voice"),
-        ({"name": "style", "voice": "voice", "sentence_rules": [], "prohibited_patterns": ["pattern"]}, "sentence_rules"),
-        ({"name": "style", "voice": "voice", "sentence_rules": ["rule"], "prohibited_patterns": []}, "prohibited_patterns"),
+        (
+            {
+                "name": "",
+                "voice": "voice",
+                "sentence_rules": ["rule"],
+                "prohibited_patterns": ["pattern"],
+            },
+            "name",
+        ),
+        (
+            {
+                "name": "style",
+                "voice": "",
+                "sentence_rules": ["rule"],
+                "prohibited_patterns": ["pattern"],
+            },
+            "voice",
+        ),
+        (
+            {
+                "name": "style",
+                "voice": "voice",
+                "sentence_rules": [],
+                "prohibited_patterns": ["pattern"],
+            },
+            "sentence_rules",
+        ),
+        (
+            {
+                "name": "style",
+                "voice": "voice",
+                "sentence_rules": ["rule"],
+                "prohibited_patterns": [],
+            },
+            "prohibited_patterns",
+        ),
     ],
 )
 def test_style_profile_rejects_empty_fields(payload: dict[str, object], field_name: str) -> None:

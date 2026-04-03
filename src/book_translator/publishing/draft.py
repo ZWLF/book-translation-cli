@@ -16,7 +16,7 @@ class DraftRequest(BaseModel):
     source_text: str
 
     @model_validator(mode="after")
-    def _ensure_style_name_matches_style(self) -> "DraftRequest":
+    def _ensure_style_name_matches_style(self) -> DraftRequest:
         if self.style_name != self.style.name:
             raise ValueError("style_name must match style.name")
         return self
