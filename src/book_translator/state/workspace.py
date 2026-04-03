@@ -27,7 +27,11 @@ class Workspace:
         self.qa_summary_path = self.qa_root_path / "qa_summary.json"
         self.publishing_root_path = self.root / "publishing"
         self.publishing_state_dir = self.publishing_root_path / "state"
+        self.publishing_lexicon_dir = self.publishing_root_path / "lexicon"
         self.publishing_draft_text_path = self.publishing_root_path / "draft" / "draft.txt"
+        self.publishing_glossary_path = self.publishing_lexicon_dir / "glossary.json"
+        self.publishing_names_path = self.publishing_lexicon_dir / "names.json"
+        self.publishing_decisions_path = self.publishing_lexicon_dir / "decisions.json"
         self.publishing_final_pdf_path = self.publishing_root_path / "final" / "translated.pdf"
 
     def initialize(self, manifest: Manifest) -> None:
@@ -155,3 +159,19 @@ class Workspace:
         if isinstance(payload, PublishingStageState):
             return payload.model_copy(update={"stage": stage})
         return PublishingStageState.model_validate({**payload, "stage": stage})
+
+    def write_publishing_glossary(self, glossary: dict[str, str]) -> None:
+        self._write_publishing_json(self.publishing_glossary_path, glossary)
+
+    def write_publishing_names(self, names: dict[str, str]) -> None:
+        self._write_publishing_json(self.publishing_names_path, names)
+
+    def write_publishing_decisions(self, decisions: list[dict[str, object]]) -> None:
+        self._write_publishing_json(self.publishing_decisions_path, decisions)
+
+    def _write_publishing_json(self, path: Path, payload: object) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
