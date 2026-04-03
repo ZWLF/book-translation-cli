@@ -1,26 +1,27 @@
 # book-translation-cli
 
-Command-line tool for translating text-based PDF and EPUB books into Simplified Chinese.
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+
+Command-line tool for translating text-based PDF and EPUB books into Simplified Chinese, with both an engineering workflow for fast batch translation and a publishing workflow for source-aware review, structured repair, polished PDF output, and reflowable EPUB output.
 
 ## Modes
 
 - `engineering`: accurate, resumable, cost-aware translation for bulk processing
-- `publishing`: quality-first non-fiction translation with staged revision, proofreading, final review, and source-aware deep review
+- `publishing`: quality-first non-fiction translation with staged revision, proofreading, final review, structured source audit, arbitration, and deep review
 
 The top-level command remains an alias to `engineering` for compatibility.
 
 ## Features
 
 - Extract text from text-based PDF and EPUB files
-- Preserve chapter structure using bookmarks/TOC first, then heading rules
+- Preserve chapter structure using bookmarks or TOC first, then heading rules
 - Chunk chapters for concurrent translation
 - Translate with OpenAI or Gemini APIs
-- Async concurrency with exponential backoff retries
-- Resume unfinished runs
-- Write `translated.txt`, `error_log.json`, and `run_summary.json`
-- Render a polished Chinese reading PDF as `translated.pdf`
-- Add a staged publishing workflow with draft, lexicon, revision, proofread, final-review, and deep-review outputs
-- Rasterize rendered PDF pages into PNG screenshots for visual QA
+- Retry recoverable API failures with exponential backoff
+- Resume unfinished runs and rerun selected stages
+- Render polished Chinese reading PDFs
+- Generate reflowable EPUB output from the structured publishing pipeline
+- Produce source-audit artifacts, review consensus, repair logs, and QA screenshots
 
 ## Installation
 
@@ -81,47 +82,47 @@ book-translator publishing --input ./books/book.pdf --output ./out --also-epub
 book-translator publishing --input ./books/book.epub --output ./out --also-pdf
 ```
 
-To resume only the later editorial stages:
+Resume only later editorial stages:
 
 ```bash
 book-translator publishing --input ./books --output ./out --from-stage revision --to-stage final-review
 ```
 
-To rerun the final publishing QA sweep from `final-review` through the source-aware `deep-review` stage and rebuild the final TXT/PDF:
+Run the source-aware deep-review pass and rebuild the final deliverables:
 
 ```bash
 book-translator publishing --input ./books --output ./out --from-stage final-review --to-stage deep-review --render-pdf
 ```
 
-To stop after lexicon creation for inspection:
+Stop after lexicon creation for inspection:
 
 ```bash
 book-translator publishing --input ./books --output ./out --to-stage lexicon
 ```
 
-To re-render a polished PDF from an existing workspace without calling the translation API again:
+Re-render a polished PDF from an existing workspace without calling the translation API again:
 
 ```bash
 book-translator render-pdf --workspace ./out/book-name
 ```
 
-To export specific PDF pages as PNG files:
+Export specific PDF pages as PNG files:
 
 ```bash
 book-translator render-pages --pdf ./out/book-name/translated.pdf --output-dir ./tmp/pages --pages 1,3-5
 ```
 
-To generate a workspace-local visual QA snapshot set:
+Generate a workspace-local visual QA snapshot set:
 
 ```bash
 book-translator qa-pdf --workspace ./out/book-name
 ```
 
-If the engineering PDF is absent but `publishing/final/translated.pdf` exists, `qa-pdf` will use the publishing PDF and write screenshots under `publishing/qa/`.
+If the engineering PDF is absent but `publishing/final/translated.pdf` exists, `qa-pdf` uses the publishing PDF and writes screenshots under `publishing/qa/`.
 
 ## Output Per Book
 
-Each processed book writes a dedicated workspace directory under the output root:
+Each processed book writes a dedicated workspace directory under the output root.
 
 ### Engineering outputs
 
@@ -150,6 +151,7 @@ Each processed book writes a dedicated workspace directory under the output root
 - `publishing/final/final_chapters.jsonl`
 - `publishing/final/translated.txt`
 - `publishing/final/translated.pdf`
+- `publishing/final/translated.epub`
 - `publishing/editorial_log.json`
 - `publishing/run_summary.json`
 - `publishing/qa/pages/page-###.png`
@@ -166,7 +168,6 @@ Additional artifacts when `--to-stage deep-review` runs:
 - `publishing/audit/final_audit_report.json`
 - `publishing/assets/manifest.json`
 - `publishing/assets/images/*`
-- `publishing/final/translated.epub` when `EPUB` is the primary output or `--also-epub` is used
 
 ## CLI Options
 
@@ -205,7 +206,7 @@ Publishing stage semantics:
 - `revision`: chapter-level revision against the lexicon
 - `proofread`: independent proofreading pass with notes
 - `final-review`: whole-book consistency pass plus final text/PDF output
-- `deep-review`: source-aware acceptance pass that emits findings/revised chapters, audit artifacts, and then rebuilds the final text/PDF/EPUB according to the selected outputs
+- `deep-review`: source-aware acceptance pass that emits findings, audit artifacts, and then rebuilds the final text/PDF/EPUB according to the selected outputs
 
 ## Validation
 
