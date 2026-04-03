@@ -291,7 +291,7 @@ def render_polished_pdf(
 
     story: list[Any] = []
 
-    cover_title_zh = book.title_zh or f"{book.title_en} 简体中文版"
+    cover_title_zh = _preferred_cover_title_zh(book.title_en, book.title_zh)
     cover_title_en = book.title_en
     edition_copy = _edition_front_matter(book, edition_label)
     cover_author = book.author or "未知作者"
@@ -688,7 +688,7 @@ def _edition_front_matter(book: PrintableBook, edition_label: str) -> EditionFro
             ),
             metadata_lines=[
                 f"翻译原件：{book.title_en}",
-                "开发者：曾伟良（Weiliang Zeng）",
+                "开发者：ZWLF",
                 "开发方式：基于 Codex 的 Vibe Coding 翻译程序",
                 f"模型 API：{book.model}",
                 "联系方式：weiliangzeng03@gmail.com",
@@ -784,13 +784,10 @@ def _build_toc_label_html(title_en: str, title_zh: str | None) -> str:
 
 
 def _build_block_text(lines: list[str], citation_numbers: list[str]) -> str:
-    text = xml_escape(_tighten_mixed_text_spacing(_combine_flow_lines(lines)))
+    text = _style_inline_citation_numbers(_tighten_mixed_text_spacing(_combine_flow_lines(lines)))
     if not citation_numbers:
         return text
-    citation_markup = "".join(
-        f"<font color='#2F5BD2' size='6.8'><super>{xml_escape(number)}</super></font>"
-        for number in citation_numbers
-    )
+    citation_markup = _render_citation_markup(citation_numbers)
     return f"{text}{citation_markup}"
 
 
@@ -802,6 +799,30 @@ def _tighten_mixed_text_spacing(text: str) -> str:
     value = re.sub(r"(?<=[A-Za-z])\s+(?=\d)", " ", value)
     value = re.sub(r"(?<=\d)\s+(?=[A-Za-z])", " ", value)
     return value
+
+
+def _style_inline_citation_numbers(text: str) -> str:
+    pattern = re.compile(r"([。！？!?；;:：”’」】）)])\s*(\d{2,4})")
+    segments: list[str] = []
+    last_end = 0
+    for match in pattern.finditer(text):
+        next_char = text[match.end() : match.end() + 1]
+        if next_char and not next_char.isspace():
+            if not _contains_chinese(next_char) or next_char in {"年", "月", "日", "号"}:
+                continue
+        segments.append(xml_escape(text[last_end : match.start()]))
+        segments.append(xml_escape(match.group(1)))
+        segments.append(_render_citation_markup([match.group(2)]))
+        last_end = match.end()
+    segments.append(xml_escape(text[last_end:]))
+    return "".join(segments)
+
+
+def _render_citation_markup(numbers: list[str]) -> str:
+    return "".join(
+        f"<font color='#2F5BD2' size='6.8'><super>{xml_escape(number)}</super></font>"
+        for number in numbers
+    )
 
 
 def _has_mixed_script_content(text: str) -> bool:
@@ -979,6 +1000,12 @@ def _normalize_book_title(title: str) -> str:
     if title == "The Book of Elon A Guide to Purpose and Success":
         return "The Book of Elon: A Guide to Purpose and Success"
     return title
+
+
+def _preferred_cover_title_zh(title_en: str, title_zh: str | None) -> str:
+    if title_en == "The Book of Elon: A Guide to Purpose and Success":
+        return "埃隆之书：使命与成功指南"
+    return title_zh or f"{title_en} 简体中文版"
 
 
 def _source_stem(source_path: str) -> str:

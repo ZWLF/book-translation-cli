@@ -422,6 +422,32 @@ def test_build_printable_book_from_artifacts_splits_single_newline_citation_sequ
     assert "Life is too short for long-term grudges." in chapter.blocks[1].text
 
 
+def test_build_printable_book_from_artifacts_styles_inline_sentence_citations() -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-1",
+        chapter_index=0,
+        title="The Only One Crazy Enough for Space",
+        text=(
+            "我们并没有失去探索的意愿；人们只是认为没有前进的道路。584 "
+            "必须有一些事情来激励我们——让我们为自己身为人类的一员而感到自豪。585 "
+            "阿波罗登月就是一个例子。586"
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["paragraph"]
+    assert "<super>584</super>" in chapter.blocks[0].text
+    assert "<super>585</super>" in chapter.blocks[0].text
+    assert "<super>586</super>" in chapter.blocks[0].text
+    assert "2F5BD2" in chapter.blocks[0].text
+
+
 def test_build_printable_book_from_artifacts_keeps_numeric_leading_body_blocks() -> None:
     artifact = PublishingChapterArtifact(
         chapter_id="chapter-1",
@@ -809,6 +835,8 @@ def test_render_polished_pdf_uses_publishing_front_matter(tmp_path: Path) -> Non
     assert "出版级翻译精排版" in extracted
     assert "正文内容来自出版级翻译终稿" in extracted
     assert "The Book of Elon: A Guide to Purpose and Success" in extracted
+    assert "埃隆之书：使命与成功指南" in extracted
+    assert "开发者：ZWLF" in extracted
     assert "Codex" in extracted
     assert "Vibe Coding" in extracted
     assert "weiliangzeng03@gmail.com" in extracted
@@ -817,6 +845,7 @@ def test_render_polished_pdf_uses_publishing_front_matter(tmp_path: Path) -> Non
     assert "支持我的项目" in extracted
     assert "本次实际翻译成本：$0.120000" in extracted
     assert "H:\\\\books\\\\The Book of Elon.pdf" not in extracted
+    assert "Weiliang Zeng" not in extracted
     assert "工程化翻译精排版" not in extracted
     assert "工程化翻译结果" not in extracted
 
