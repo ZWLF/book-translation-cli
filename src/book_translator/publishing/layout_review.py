@@ -13,7 +13,6 @@ def generate_layout_annotations(
     chapter_text: str,
     findings: list[PublishingAuditFinding],
 ) -> list[PublishingLayoutAnnotation]:
-    _ = source_text
     annotations: list[PublishingLayoutAnnotation] = []
     seen_keys: set[tuple[str, str]] = set()
 
@@ -37,7 +36,11 @@ def generate_layout_annotations(
             continue
 
         if finding.finding_type == "question_answer_structure":
-            anchor = _choose_qa_anchor(chapter_text=chapter_text, finding=finding)
+            anchor = _choose_qa_anchor(
+                source_text=source_text,
+                chapter_text=chapter_text,
+                finding=finding,
+            )
             _append_unique(
                 annotations=annotations,
                 seen_keys=seen_keys,
@@ -146,11 +149,118 @@ def _tokenize_for_match(text: str) -> set[str]:
     return set(tokens)
 
 
-def _choose_qa_anchor(*, chapter_text: str, finding: PublishingAuditFinding) -> str:
+def _choose_qa_anchor(
+    *,
+    source_text: str,
+    chapter_text: str,
+    finding: PublishingAuditFinding,
+) -> str:
+    bounded_anchor = _extract_qa_anchor(chapter_text, source_text=source_text)
+    if bounded_anchor:
+        return bounded_anchor
+
     target_excerpt = finding.target_excerpt.strip()
     if target_excerpt:
         return target_excerpt
     return _excerpt(chapter_text)
+
+
+def _extract_qa_anchor(text: str, *, source_text: str) -> str:
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n+", text)
+        if paragraph.strip()
+    ]
+    for paragraph in paragraphs:
+        lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+        if not lines:
+            continue
+        if (
+            len(lines) >= 2
+            and _looks_like_qa_question(lines[0])
+            and _looks_like_qa_answer(lines[1])
+        ):
+            return "\n".join([lines[0], lines[1]])
+        if len(lines) >= 2 and _looks_like_question_line(lines[0]):
+            return "\n".join([lines[0], lines[1]])
+        if (
+            len(lines) >= 2
+            and _source_has_explicit_qa_markers(source_text)
+            and _looks_like_markerless_qa_pair(lines[0], lines[1])
+        ):
+            return "\n".join([lines[0], lines[1]])
+        compact_anchor = _extract_compact_qa_anchor(paragraph)
+        if compact_anchor:
+            return compact_anchor
+    return ""
+
+
+def _extract_compact_qa_anchor(text: str) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return ""
+
+    explicit_marker_match = re.match(
+        r"^\s*((?:q|question|问)\s*[:：].+?)\s+((?:a|answer|答)\s*[:：].+?)\s*$",
+        compact,
+        re.IGNORECASE,
+    )
+    if explicit_marker_match:
+        return "\n".join(
+            [
+                explicit_marker_match.group(1).strip(),
+                explicit_marker_match.group(2).strip(),
+            ]
+        )
+
+    question_break = re.search(r"[?？]", compact)
+    if question_break is None:
+        return ""
+
+    question_line = compact[: question_break.end()].strip()
+    answer_line = compact[question_break.end() :].strip()
+    if not question_line or not answer_line:
+        return ""
+    if not _looks_like_question_line(question_line):
+        return ""
+    return "\n".join([question_line, answer_line])
+
+
+def _looks_like_qa_question(text: str) -> bool:
+    return bool(re.match(r"^\s*(?:q|question|问)\s*[:：]\s*\S", text, re.IGNORECASE))
+
+
+def _looks_like_qa_answer(text: str) -> bool:
+    return bool(re.match(r"^\s*(?:a|answer|答)\s*[:：]\s*\S", text, re.IGNORECASE))
+
+
+def _looks_like_question_line(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return False
+    if _looks_like_qa_question(compact):
+        return True
+    return bool(re.search(r"[?？]\s*$", compact))
+
+
+def _source_has_explicit_qa_markers(text: str) -> bool:
+    return _has_question_marker(text) and _has_answer_marker(text)
+
+
+def _looks_like_markerless_qa_pair(question_line: str, answer_line: str) -> bool:
+    question = re.sub(r"\s+", " ", question_line).strip()
+    answer = re.sub(r"\s+", " ", answer_line).strip()
+    if not question or not answer:
+        return False
+    if _looks_like_qa_answer(question) or _looks_like_qa_question(answer):
+        return False
+    if re.search(r"[.!?。！？:;：；]\s*$", question):
+        return False
+    if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", question):
+        return False
+    if not re.search(r"[.!?。！？]\s*$", answer):
+        return False
+    return True
 
 
 def _stable_emphasized_line(text: str) -> str:

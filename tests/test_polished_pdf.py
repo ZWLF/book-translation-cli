@@ -13,6 +13,8 @@ from book_translator.output.polished_pdf import (
     render_polished_pdf,
     running_header_texts,
 )
+from book_translator.publishing.layout_review import generate_layout_annotations
+from book_translator.publishing.source_audit import audit_source_against_target
 
 
 def _chunk(
@@ -727,6 +729,99 @@ def test_build_printable_book_from_artifacts_compact_qa_anchor_does_not_duplicat
     assert [block.kind for block in chapter.blocks] == ["qa_question", "qa_answer"]
     assert chapter.blocks[0].text == "Why now?"
     assert chapter.blocks[1].text == "Because the window is open. Afterward."
+
+
+def test_markerless_qa_without_question_mark_keeps_follow_up_paragraph(
+) -> None:
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-qa-no-question-mark",
+        chapter_index=0,
+        title="Chapter QA No Question Mark",
+        text="\n".join(
+            [
+                "Why now",
+                "Because the window is open.",
+                "",
+                "A separate follow-up paragraph.",
+            ]
+        ),
+    )
+
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+        deep_review_decisions={
+            "chapters": [
+                {
+                    "chapter_id": "chapter-qa-no-question-mark",
+                    "annotations": [
+                        {
+                            "kind": "qa_block",
+                            "payload": {
+                                "anchor": (
+                                    "Why now\nBecause the window is open.\n\n"
+                                    "A separate follow-up paragraph."
+                                ),
+                                "has_question_marker": False,
+                                "has_answer_marker": False,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["qa_question", "qa_answer", "paragraph"]
+    assert chapter.blocks[0].text == "Why now"
+    assert chapter.blocks[1].text == "Because the window is open."
+    assert chapter.blocks[2].text == "A separate follow-up paragraph."
+
+
+def test_end_to_end_markerless_qa_without_question_mark_uses_bounded_annotation_anchor() -> None:
+    source_text = "Q: Why now?\nA: Because the window is open."
+    target_text = "Why now\nBecause the window is open.\n\nA separate follow-up paragraph."
+    findings = audit_source_against_target(
+        chapter_id="chapter-qa-no-question-mark-e2e",
+        source_text=source_text,
+        target_text=target_text,
+    )
+    annotations = generate_layout_annotations(
+        source_text=source_text,
+        chapter_text=target_text,
+        findings=findings,
+    )
+
+    assert len(annotations) == 1
+    assert annotations[0].payload["anchor"] == "Why now\nBecause the window is open."
+
+    artifact = PublishingChapterArtifact(
+        chapter_id="chapter-qa-no-question-mark-e2e",
+        chapter_index=0,
+        title="Chapter QA No Question Mark E2E",
+        text=target_text,
+    )
+    book = build_printable_book_from_artifacts(
+        manifest=_manifest(),
+        summary={"estimated_cost_usd": 0.0},
+        chapters=[artifact],
+        deep_review_decisions={
+            "chapters": [
+                {
+                    "chapter_id": artifact.chapter_id,
+                    "annotations": [annotation.model_dump() for annotation in annotations],
+                }
+            ]
+        },
+    )
+
+    chapter = book.chapters[0]
+    assert [block.kind for block in chapter.blocks] == ["qa_question", "qa_answer", "paragraph"]
+    assert chapter.blocks[0].text == "Why now"
+    assert chapter.blocks[1].text == "Because the window is open."
+    assert chapter.blocks[2].text == "A separate follow-up paragraph."
 
 
 def test_build_printable_book_from_artifacts_preserves_citation_markup_in_callout_annotations(

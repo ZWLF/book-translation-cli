@@ -904,7 +904,7 @@ def _build_qa_blocks(*, anchor: str, payload: dict[str, str | int | bool]) -> li
         if not _annotation_signals_qa_structure(payload):
             return []
         question_line = lines[0]
-        answer_line = " ".join(lines[1:])
+        answer_line = lines[1]
 
     return [
         PrintableBlock(kind="qa_question", text=question_line),

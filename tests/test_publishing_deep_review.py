@@ -177,5 +177,37 @@ def test_generate_layout_annotations_qa_flags_false_when_both_markers_dropped() 
     assert annotations[0].payload["has_answer_marker"] is False
 
 
+def test_generate_layout_annotations_qa_anchor_stops_before_follow_up_paragraph() -> None:
+    findings = [
+        PublishingAuditFinding(
+            chapter_id="c6",
+            finding_type="question_answer_structure",
+            severity="medium",
+            source_excerpt="Why now?\nBecause the window is open.",
+            target_excerpt=(
+                "Why now?\nBecause the window is open.\n\n"
+                "This follow-up paragraph should stay separate."
+            ),
+            reason="verify question and answer layout",
+            auto_fixable=False,
+        )
+    ]
+
+    annotations = generate_layout_annotations(
+        source_text="Why now?\nBecause the window is open.",
+        chapter_text=(
+            "Why now?\nBecause the window is open.\n\n"
+            "This follow-up paragraph should stay separate."
+        ),
+        findings=findings,
+    )
+
+    assert len(annotations) == 1
+    assert annotations[0].kind == "qa_block"
+    assert annotations[0].payload["anchor"] == "Why now?\nBecause the window is open."
+    assert annotations[0].payload["has_question_marker"] is False
+    assert annotations[0].payload["has_answer_marker"] is False
+
+
 def test_task3_does_not_expand_publishing_chapter_artifact_schema() -> None:
     assert "layout_annotations" not in PublishingChapterArtifact.model_fields

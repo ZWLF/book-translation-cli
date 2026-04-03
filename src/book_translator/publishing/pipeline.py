@@ -829,15 +829,16 @@ async def _rebuild_stable_publishing_outputs(
     deep_review_decisions: dict[str, object] | None = None,
 ) -> None:
     workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
-    workspace.publishing_final_text_path.write_text(
-        assemble_publishing_output_text(
-            chapters,
-            deep_review_chapters=deep_review_chapters,
-        ),
-        encoding="utf-8",
+    final_text = assemble_publishing_output_text(
+        chapters,
+        deep_review_chapters=deep_review_chapters,
     )
+    temp_text_path = workspace.publishing_final_text_path.with_suffix(".txt.tmp")
+    temp_pdf_path = workspace.publishing_final_pdf_path.with_suffix(".pdf.tmp")
+    temp_text_path.write_text(final_text, encoding="utf-8")
 
     if not config.render_pdf:
+        temp_text_path.replace(workspace.publishing_final_text_path)
         return
 
     printable_book = build_printable_book_from_artifacts(
@@ -863,8 +864,16 @@ async def _rebuild_stable_publishing_outputs(
         max_concurrency=config.max_concurrency,
         max_attempts=config.max_attempts,
     )
-    render_polished_pdf(
-        printable_book,
-        workspace.publishing_final_pdf_path,
-        edition_label="publishing",
-    )
+    try:
+        render_polished_pdf(
+            printable_book,
+            temp_pdf_path,
+            edition_label="publishing",
+        )
+        temp_text_path.replace(workspace.publishing_final_text_path)
+        temp_pdf_path.replace(workspace.publishing_final_pdf_path)
+    finally:
+        if temp_text_path.exists():
+            temp_text_path.unlink()
+        if temp_pdf_path.exists():
+            temp_pdf_path.unlink()

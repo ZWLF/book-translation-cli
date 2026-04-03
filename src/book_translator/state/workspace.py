@@ -206,16 +206,12 @@ class Workspace:
             ],
             "final-review": [
                 self.publishing_final_chapters_path,
-                self.publishing_final_text_path,
-                self.publishing_final_pdf_path,
                 self.publishing_editorial_log_path,
             ],
             "deep-review": [
                 self.publishing_deep_review_findings_path,
                 self.publishing_deep_review_chapters_path,
                 self.publishing_deep_review_decisions_path,
-                self.publishing_final_text_path,
-                self.publishing_final_pdf_path,
             ],
         }
         for path in stage_paths.get(stage, []):

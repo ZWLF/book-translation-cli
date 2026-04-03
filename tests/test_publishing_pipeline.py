@@ -585,3 +585,77 @@ async def test_process_book_publishing_reports_only_changed_deep_review_chapters
     )
 
     assert summary["deep_review_revised_chapters"] == 1
+
+
+@pytest.mark.asyncio
+async def test_deep_review_rerun_preserves_last_good_final_outputs_on_render_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "sample.epub"
+    _build_sample_epub(input_path)
+
+    async def fake_enrich_missing_titles(**kwargs):
+        return kwargs["book"]
+
+    def fake_render_polished_pdf(book, path, edition_label):
+        _ = book, edition_label
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("stable pdf", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.enrich_missing_titles",
+        fake_enrich_missing_titles,
+    )
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.render_polished_pdf",
+        fake_render_polished_pdf,
+    )
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            to_stage="deep-review",
+        ),
+        provider=FakeProvider(),
+    )
+
+    workspace_dir = tmp_path / "out" / "sample"
+    title_translations_path = workspace_dir / "title_translations.json"
+    final_text_path = workspace_dir / "publishing" / "final" / "translated.txt"
+    final_pdf_path = workspace_dir / "publishing" / "final" / "translated.pdf"
+    original_text = final_text_path.read_text(encoding="utf-8")
+    original_pdf = final_pdf_path.read_text(encoding="utf-8")
+
+    title_translations_path.write_text(
+        json.dumps({"chapter-1-0": "第一章"}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    def raising_render_polished_pdf(book, path, edition_label):
+        _ = book, path, edition_label
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.render_polished_pdf",
+        raising_render_polished_pdf,
+    )
+
+    with pytest.raises(RuntimeError, match="render failed"):
+        await process_book_publishing(
+            input_path=input_path,
+            output_root=tmp_path / "out",
+            config=PublishingRunConfig(
+                provider="openai",
+                model="gpt-4o-mini",
+                from_stage="deep-review",
+                to_stage="deep-review",
+            ),
+            provider=FailIfCalledProvider(),
+        )
+
+    assert final_text_path.read_text(encoding="utf-8") == original_text
+    assert final_pdf_path.read_text(encoding="utf-8") == original_pdf

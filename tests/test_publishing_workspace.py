@@ -168,8 +168,8 @@ def test_publishing_workspace_clears_deep_review_stage_outputs(tmp_path: Path) -
     assert not workspace.publishing_deep_review_findings_path.exists()
     assert not workspace.publishing_deep_review_chapters_path.exists()
     assert not workspace.publishing_deep_review_decisions_path.exists()
-    assert not workspace.publishing_final_text_path.exists()
-    assert not workspace.publishing_final_pdf_path.exists()
+    assert workspace.publishing_final_text_path.read_text(encoding="utf-8") == "final text"
+    assert workspace.publishing_final_pdf_path.read_text(encoding="utf-8") == "final pdf"
     assert workspace.read_publishing_stage_state("deep-review") is None
 
 
