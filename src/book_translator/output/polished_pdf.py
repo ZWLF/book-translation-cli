@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
-from book_translator.models import Chunk, Manifest, TranslationResult
+from book_translator.models import Chunk, Manifest, PublishingChapterArtifact, TranslationResult
 
 
 @dataclass(slots=True)
@@ -72,9 +72,55 @@ def build_printable_book(
         )
         entry["texts"].append(translated.translated_text)
 
+    return _build_printable_book_from_entries(
+        manifest=manifest,
+        summary=summary,
+        grouped_entries=grouped,
+        title_en=title_en,
+        author=author,
+        title_overrides=title_overrides,
+    )
+
+
+def build_printable_book_from_artifacts(
+    *,
+    manifest: Manifest,
+    summary: dict[str, Any],
+    chapters: list[PublishingChapterArtifact],
+    title_overrides: dict[str, str] | None = None,
+) -> PrintableBook:
+    title_en, author = _parse_title_and_author(_source_stem(manifest.source_path))
+    grouped = {
+        chapter.chapter_id: {
+            "chapter_id": chapter.chapter_id,
+            "chapter_index": chapter.chapter_index,
+            "source_title": chapter.title,
+            "texts": [chapter.text],
+        }
+        for chapter in chapters
+    }
+    return _build_printable_book_from_entries(
+        manifest=manifest,
+        summary=summary,
+        grouped_entries=grouped,
+        title_en=title_en,
+        author=author,
+        title_overrides=title_overrides or {},
+    )
+
+
+def _build_printable_book_from_entries(
+    *,
+    manifest: Manifest,
+    summary: dict[str, Any],
+    grouped_entries: dict[str, dict[str, Any]],
+    title_en: str,
+    author: str | None,
+    title_overrides: dict[str, str],
+) -> PrintableBook:
     title_zh: str | None = None
     chapters: list[PrintableChapter] = []
-    for entry in sorted(grouped.values(), key=lambda item: item["chapter_index"]):
+    for entry in sorted(grouped_entries.values(), key=lambda item: item["chapter_index"]):
         combined_text = "\n\n".join(entry["texts"]).strip()
         if not combined_text:
             continue

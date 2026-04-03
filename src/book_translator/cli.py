@@ -9,7 +9,7 @@ import typer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-from book_translator.config import RunConfig
+from book_translator.config import PublishingRunConfig, RunConfig
 from book_translator.output.pdf_raster import (
     choose_sample_pages,
     parse_page_spec,
@@ -20,6 +20,7 @@ from book_translator.output.pdf_raster import (
 from book_translator.output.polished_pdf import build_printable_book, render_polished_pdf
 from book_translator.output.title_enrichment import enrich_missing_titles
 from book_translator.pipeline import discover_books, process_book
+from book_translator.publishing.pipeline import process_book_publishing
 from book_translator.state.workspace import Workspace
 
 app = typer.Typer(
@@ -27,6 +28,10 @@ app = typer.Typer(
     help="Translate text-based PDF and EPUB books into Simplified Chinese.",
     add_completion=False,
 )
+engineering_app = typer.Typer(help="Engineering workflows.")
+publishing_app = typer.Typer(help="Publishing workflows.")
+app.add_typer(engineering_app, name="engineering")
+app.add_typer(publishing_app, name="publishing")
 console = Console()
 DEFAULT_OUTPUT_PATH = Path("out")
 
@@ -41,8 +46,7 @@ def _run_async_sync(awaitable):
         return executor.submit(lambda: asyncio.run(awaitable)).result()
 
 
-@app.callback(invoke_without_command=True)
-def run(
+def _engineering_command(
     ctx: typer.Context,
     input_path: Annotated[
         Path | None,
@@ -70,8 +74,7 @@ def run(
     ] = None,
     chunk_size: Annotated[int, typer.Option("--chunk-size", min=100)] = 3000,
     render_pdf: Annotated[bool, typer.Option("--render-pdf/--no-render-pdf")] = True,
-) -> None:
-    """Translate text-based PDF and EPUB books into Simplified Chinese."""
+    ) -> None:
     if ctx.invoked_subcommand is not None:
         return
     if input_path is None:
@@ -95,6 +98,125 @@ def run(
         render_pdf=render_pdf,
     )
     asyncio.run(_run_cli(input_path=input_path, output_path=output_path, config=config))
+
+
+app.callback(invoke_without_command=True)(_engineering_command)
+engineering_app.callback(invoke_without_command=True)(_engineering_command)
+run = _engineering_command
+
+
+@publishing_app.callback(invoke_without_command=True)
+def publishing(
+    ctx: typer.Context,
+    input_path: Annotated[
+        Path | None,
+        typer.Option("--input", exists=True, file_okay=True, dir_okay=True),
+    ] = None,
+    output_path: Annotated[Path, typer.Option("--output")] = DEFAULT_OUTPUT_PATH,
+    provider: Annotated[str, typer.Option("--provider")] = "openai",
+    model: Annotated[str | None, typer.Option("--model")] = None,
+    api_key_env: Annotated[str | None, typer.Option("--api-key-env")] = None,
+    max_concurrency: Annotated[int, typer.Option("--max-concurrency", min=1)] = 3,
+    resume: Annotated[bool, typer.Option("--resume/--no-resume")] = True,
+    force: Annotated[bool, typer.Option("--force")] = False,
+    glossary: Annotated[
+        Path | None,
+        typer.Option("--glossary", exists=True, file_okay=True, dir_okay=False),
+    ] = None,
+    name_map: Annotated[
+        Path | None,
+        typer.Option("--name-map", exists=True, file_okay=True, dir_okay=False),
+    ] = None,
+    chapter_strategy: Annotated[str, typer.Option("--chapter-strategy")] = "toc-first",
+    manual_toc: Annotated[
+        Path | None,
+        typer.Option("--manual-toc", exists=True, file_okay=True, dir_okay=False),
+    ] = None,
+    chunk_size: Annotated[int, typer.Option("--chunk-size", min=100)] = 3000,
+    render_pdf: Annotated[bool, typer.Option("--render-pdf/--no-render-pdf")] = True,
+    style: Annotated[str, typer.Option("--style")] = "non-fiction-publishing",
+    from_stage: Annotated[str, typer.Option("--from-stage")] = "draft",
+    to_stage: Annotated[str, typer.Option("--to-stage")] = "final-review",
+) -> None:
+    """Publishing workflows."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if input_path is None:
+        if ctx.resilient_parsing:
+            return
+        typer.echo(ctx.get_help())
+        raise typer.Exit(code=0)
+
+    config = PublishingRunConfig(
+        provider=provider,
+        model=model,
+        api_key_env=api_key_env,
+        max_concurrency=max_concurrency,
+        resume=resume,
+        force=force,
+        glossary_path=glossary,
+        name_map_path=name_map,
+        chapter_strategy=chapter_strategy,
+        manual_toc_path=manual_toc,
+        chunk_size=chunk_size,
+        render_pdf=render_pdf,
+        style=style,
+        from_stage=from_stage,
+        to_stage=to_stage,
+    )
+    asyncio.run(_run_publishing_cli(input_path=input_path, output_path=output_path, config=config))
+
+
+async def _run_publishing_cli(
+    *,
+    input_path: Path,
+    output_path: Path,
+    config: PublishingRunConfig,
+) -> None:
+    books = discover_books(input_path)
+    if not books:
+        raise typer.BadParameter(f"No supported .pdf or .epub files found under {input_path}.")
+
+    output_path.mkdir(parents=True, exist_ok=True)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task_id = progress.add_task("Processing publishing books", total=len(books))
+        for book in books:
+            summary = await process_book_publishing(
+                input_path=book,
+                output_root=output_path,
+                config=config,
+            )
+            progress.advance(task_id)
+            console.print(
+                f"[green]{book.name}[/green] "
+                f"stage={summary['completed_stage']} "
+                f"chunks={summary['successful_chunks']}/{summary['total_chunks']} "
+                "failed="
+                f"{summary['failed_chunks']} "
+                f"cost~=${float(summary['estimated_cost_usd']):.6f}"
+            )
+
+
+def _resolve_qa_target(workspace: Workspace) -> tuple[Path, Path, Path]:
+    if workspace.pdf_output_path.exists():
+        return workspace.pdf_output_path, workspace.qa_pages_path, workspace.qa_summary_path
+    if workspace.publishing_final_pdf_path.exists():
+        return (
+            workspace.publishing_final_pdf_path,
+            workspace.publishing_qa_pages_path,
+            workspace.publishing_qa_summary_path,
+        )
+    raise typer.BadParameter(
+        "Workspace PDF does not exist: "
+        f"{workspace.pdf_output_path} or {workspace.publishing_final_pdf_path}"
+    )
 
 
 async def _run_cli(*, input_path: Path, output_path: Path, config: RunConfig) -> None:
@@ -206,9 +328,7 @@ def qa_pdf_command(
 ) -> None:
     """Generate PNG screenshots for visual QA from a rendered workspace PDF."""
     workspace = Workspace(workspace_path)
-    pdf_path = workspace.pdf_output_path
-    if not pdf_path.exists():
-        raise typer.BadParameter(f"Workspace PDF does not exist: {pdf_path}")
+    pdf_path, default_output_dir, summary_path = _resolve_qa_target(workspace)
 
     total_pages = pdf_page_count(pdf_path)
     if pages:
@@ -218,14 +338,13 @@ def qa_pdf_command(
     else:
         selected_pages = choose_sample_pages(total_pages)
 
-    target_dir = output_dir or workspace.qa_pages_path
+    target_dir = output_dir or default_output_dir
     rendered = render_pdf_pages(
         pdf_path=pdf_path,
         output_dir=target_dir,
         pages=selected_pages,
         dpi=dpi,
     )
-    summary_path = workspace.qa_summary_path
     write_qa_summary(
         pdf_path=pdf_path,
         summary_path=summary_path,

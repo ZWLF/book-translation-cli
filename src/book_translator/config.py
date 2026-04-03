@@ -4,8 +4,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
@@ -16,6 +17,14 @@ DEFAULT_KEY_ENV = {
     "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
 }
+
+PUBLISHING_STAGES = (
+    "draft",
+    "lexicon",
+    "revision",
+    "proofread",
+    "final-review",
+)
 
 
 class RunConfig(BaseModel):
@@ -60,6 +69,37 @@ class RunConfig(BaseModel):
             "glossary_path": str(self.glossary_path) if self.glossary_path else None,
             "name_map_path": str(self.name_map_path) if self.name_map_path else None,
             "manual_toc_path": str(self.manual_toc_path) if self.manual_toc_path else None,
+        }
+        raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+
+class PublishingRunConfig(RunConfig):
+    style: Literal["non-fiction-publishing"] = "non-fiction-publishing"
+    from_stage: Literal["draft", "lexicon", "revision", "proofread", "final-review"] = "draft"
+    to_stage: Literal["draft", "lexicon", "revision", "proofread", "final-review"] = (
+        "final-review"
+    )
+    mode: Literal["publishing"] = "publishing"
+    max_concurrency: int = Field(default=3, ge=1, le=16)
+
+    @model_validator(mode="after")
+    def validate_stage_window(self) -> PublishingRunConfig:
+        if PUBLISHING_STAGES.index(self.from_stage) > PUBLISHING_STAGES.index(self.to_stage):
+            raise ValueError("from_stage must not come after to_stage.")
+        return self
+
+    def config_fingerprint(self) -> str:
+        payload = {
+            "provider": self.provider,
+            "model": self.resolved_model(),
+            "chapter_strategy": self.chapter_strategy,
+            "chunk_size": self.chunk_size,
+            "glossary_path": str(self.glossary_path) if self.glossary_path else None,
+            "name_map_path": str(self.name_map_path) if self.name_map_path else None,
+            "manual_toc_path": str(self.manual_toc_path) if self.manual_toc_path else None,
+            "style": self.style,
+            "mode": self.mode,
         }
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()

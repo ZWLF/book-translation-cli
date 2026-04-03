@@ -82,3 +82,22 @@ def test_qa_pdf_command_writes_workspace_artifacts(tmp_path: Path) -> None:
     summary = json.loads(workspace.qa_summary_path.read_text(encoding="utf-8"))
     assert summary["rendered_pages"] == [1, 2]
     assert summary["pdf_path"] == str(workspace.pdf_output_path)
+
+
+def test_qa_pdf_command_prefers_publishing_pdf_when_engineering_pdf_missing(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace = Workspace(workspace_root)
+    workspace.root.mkdir(parents=True, exist_ok=True)
+    workspace.publishing_final_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    _build_sample_pdf(workspace.publishing_final_pdf_path, total_pages=3)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["qa-pdf", "--workspace", str(workspace_root), "--pages", "1"])
+
+    assert result.exit_code == 0
+    assert workspace.publishing_qa_pages_path.joinpath("page-001.png").exists()
+    summary = json.loads(workspace.publishing_qa_summary_path.read_text(encoding="utf-8"))
+    assert summary["rendered_pages"] == [1]
+    assert summary["pdf_path"] == str(workspace.publishing_final_pdf_path)
