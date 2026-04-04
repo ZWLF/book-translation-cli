@@ -20,7 +20,10 @@ class GuiShellViews:
     stage_var: tk.StringVar
     summary_var: tk.StringVar
     progress_var: tk.DoubleVar
-    publishing_frame: ttk.LabelFrame
+    publishing_frame: ttk.Frame
+    publishing_advanced_frame: ttk.Frame
+    publishing_expanded_var: tk.BooleanVar
+    publishing_toggle_button: ttk.Button
     run_button: ttk.Button
     log_text: tk.Text
     result_buttons: dict[str, ttk.Button]
@@ -45,6 +48,7 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
     stage_var = tk.StringVar(master=root, value="Idle")
     summary_var = tk.StringVar(master=root, value="Ready")
     progress_var = tk.DoubleVar(master=root, value=0.0)
+    publishing_expanded_var = tk.BooleanVar(master=root, value=False)
 
     outer = ttk.Frame(root, padding=18)
     outer.grid(row=0, column=0, sticky="nsew")
@@ -124,11 +128,15 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
         pady=(10, 0),
     )
 
-    publishing_frame = ttk.LabelFrame(outer, text="Publishing options")
+    publishing_frame = ttk.Frame(outer)
     publishing_frame.grid(row=3, column=0, sticky="ew", pady=(18, 0))
     publishing_frame.columnconfigure(0, weight=1)
 
-    publishing_body = ttk.Frame(publishing_frame, padding=12)
+    publishing_card = ttk.LabelFrame(publishing_frame, text="Publishing options")
+    publishing_card.grid(row=0, column=0, sticky="ew")
+    publishing_card.columnconfigure(0, weight=1)
+
+    publishing_body = ttk.Frame(publishing_card, padding=12)
     publishing_body.grid(row=0, column=0, sticky="ew")
     publishing_body.columnconfigure(1, weight=1)
 
@@ -138,18 +146,28 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
         columnspan=2,
         sticky="w",
     )
-    ttk.Checkbutton(publishing_body, text="Also export PDF", variable=also_pdf_var).grid(
-        row=1,
+    publishing_toggle_button = ttk.Button(publishing_body, text="Advanced")
+    publishing_toggle_button.grid(row=1, column=0, sticky="w", pady=(10, 0))
+
+    publishing_advanced_frame = ttk.Frame(publishing_body)
+    publishing_advanced_frame.grid(
+        row=2,
         column=0,
-        sticky="w",
+        columnspan=2,
+        sticky="ew",
         pady=(10, 0),
     )
-    ttk.Checkbutton(publishing_body, text="Also export EPUB", variable=also_epub_var).grid(
-        row=1,
+
+    ttk.Checkbutton(publishing_advanced_frame, text="Also export PDF", variable=also_pdf_var).grid(
+        row=0,
+        column=0,
+        sticky="w",
+    )
+    ttk.Checkbutton(publishing_advanced_frame, text="Also export EPUB", variable=also_epub_var).grid(
+        row=0,
         column=1,
         sticky="w",
         padx=(16, 0),
-        pady=(10, 0),
     )
 
     run_card = ttk.LabelFrame(outer, text="Run")
@@ -265,6 +283,9 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
         summary_var=summary_var,
         progress_var=progress_var,
         publishing_frame=publishing_frame,
+        publishing_advanced_frame=publishing_advanced_frame,
+        publishing_expanded_var=publishing_expanded_var,
+        publishing_toggle_button=publishing_toggle_button,
         run_button=run_button,
         log_text=log_text,
         result_buttons=result_buttons,

@@ -4,6 +4,7 @@ import tkinter as tk
 import tomllib
 from pathlib import Path
 from queue import Queue
+from tkinter import ttk
 
 import pytest
 
@@ -76,6 +77,18 @@ def test_gui_app_bootstraps_without_mainloop() -> None:
         assert app.mode_var.get() == "engineering"
         assert app.publishing_frame.winfo_manager() == ""
         assert app.task_runner._event_queue is app.event_queue
+    finally:
+        app.root.destroy()
+
+
+def test_gui_exposes_publishing_view_refs_for_polished_layout() -> None:
+    app = _create_gui()
+    try:
+        assert type(app.views.publishing_frame) is ttk.Frame
+        assert isinstance(app.views.publishing_advanced_frame, ttk.Frame)
+        assert isinstance(app.views.publishing_expanded_var, tk.BooleanVar)
+        assert app.views.publishing_expanded_var.get() is False
+        assert isinstance(app.views.publishing_toggle_button, ttk.Button)
     finally:
         app.root.destroy()
 
