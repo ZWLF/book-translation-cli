@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from book_translator.models import (
@@ -26,13 +27,16 @@ class Workspace:
         self.qa_pages_path = self.qa_root_path / "pages"
         self.qa_summary_path = self.qa_root_path / "qa_summary.json"
         self.publishing_root_path = self.root / "publishing"
+        self.publishing_candidate_root_path = self.publishing_root_path / "candidate"
         self.publishing_manifest_path = self.publishing_root_path / "manifest.json"
         self.publishing_state_dir = self.publishing_root_path / "state"
+        self.publishing_candidate_state_dir = self.publishing_candidate_root_path / "state"
         self.publishing_draft_dir = self.publishing_root_path / "draft"
         self.publishing_lexicon_dir = self.publishing_root_path / "lexicon"
         self.publishing_revision_dir = self.publishing_root_path / "revision"
         self.publishing_proofread_dir = self.publishing_root_path / "proofread"
         self.publishing_final_dir = self.publishing_root_path / "final"
+        self.publishing_candidate_final_dir = self.publishing_candidate_root_path / "final"
         self.publishing_deep_review_dir = self.publishing_root_path / "deep_review"
         self.publishing_audit_dir = self.publishing_root_path / "audit"
         self.publishing_assets_dir = self.publishing_root_path / "assets"
@@ -52,8 +56,17 @@ class Workspace:
         )
         self.publishing_final_chapters_path = self.publishing_final_dir / "final_chapters.jsonl"
         self.publishing_final_text_path = self.publishing_final_dir / "translated.txt"
+        self.publishing_candidate_final_text_path = (
+            self.publishing_candidate_final_dir / "translated.txt"
+        )
         self.publishing_final_pdf_path = self.publishing_final_dir / "translated.pdf"
+        self.publishing_candidate_final_pdf_path = (
+            self.publishing_candidate_final_dir / "translated.pdf"
+        )
         self.publishing_final_epub_path = self.publishing_final_dir / "translated.epub"
+        self.publishing_candidate_final_epub_path = (
+            self.publishing_candidate_final_dir / "translated.epub"
+        )
         self.publishing_deep_review_findings_path = (
             self.publishing_deep_review_dir / "findings.jsonl"
         )
@@ -178,17 +191,21 @@ class Workspace:
         stage: str,
         payload: PublishingStageState | dict[str, object],
     ) -> None:
-        self.publishing_state_dir.mkdir(parents=True, exist_ok=True)
+        state_dir = self._publishing_state_dir_for(stage)
+        state_dir.mkdir(parents=True, exist_ok=True)
         data = self._normalize_publishing_stage_state(stage=stage, payload=payload)
-        self.publishing_state_dir.joinpath(f"{stage}.json").write_text(
+        state_dir.joinpath(f"{stage}.json").write_text(
             data.model_dump_json(indent=2),
             encoding="utf-8",
         )
 
     def read_publishing_stage_state(self, stage: str) -> PublishingStageState | None:
-        state_path = self.publishing_state_dir / f"{stage}.json"
+        state_path = self._publishing_state_path(stage)
         if not state_path.exists():
-            return None
+            legacy_path = self.publishing_state_dir / f"{stage}.json"
+            if legacy_path == state_path or not legacy_path.exists():
+                return None
+            state_path = legacy_path
         return PublishingStageState.model_validate_json(state_path.read_text(encoding="utf-8"))
 
     def stage_is_stale(self, stage: str, *, upstream_fingerprint: str) -> bool:
@@ -216,6 +233,9 @@ class Workspace:
             "final-review": [
                 self.publishing_final_chapters_path,
                 self.publishing_editorial_log_path,
+                self.publishing_candidate_final_text_path,
+                self.publishing_candidate_final_pdf_path,
+                self.publishing_candidate_final_epub_path,
             ],
             "deep-review": [
                 self.publishing_deep_review_findings_path,
@@ -225,15 +245,29 @@ class Workspace:
                 self.publishing_audit_review_path,
                 self.publishing_audit_consensus_path,
                 self.publishing_audit_report_path,
+                self.publishing_candidate_final_text_path,
+                self.publishing_candidate_final_pdf_path,
+                self.publishing_candidate_final_epub_path,
             ],
         }
         for path in stage_paths.get(stage, []):
             if path.exists():
                 path.unlink()
 
-        state_path = self.publishing_state_dir / f"{stage}.json"
-        if state_path.exists():
-            state_path.unlink()
+        self._clear_publishing_stage_state(stage)
+
+    def promote_candidate_release(self) -> None:
+        candidate_to_final = [
+            (self.publishing_candidate_final_text_path, self.publishing_final_text_path),
+            (self.publishing_candidate_final_pdf_path, self.publishing_final_pdf_path),
+            (self.publishing_candidate_final_epub_path, self.publishing_final_epub_path),
+        ]
+        for source, destination in candidate_to_final:
+            if source.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+            elif destination.exists():
+                destination.unlink()
 
     def _normalize_publishing_stage_state(
         self,
@@ -296,3 +330,20 @@ class Workspace:
             for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
+
+    def _publishing_state_dir_for(self, stage: str) -> Path:
+        if stage in {"final-review", "deep-review"}:
+            return self.publishing_candidate_state_dir
+        return self.publishing_state_dir
+
+    def _publishing_state_path(self, stage: str) -> Path:
+        return self._publishing_state_dir_for(stage) / f"{stage}.json"
+
+    def _clear_publishing_stage_state(self, stage: str) -> None:
+        state_paths = [self._publishing_state_path(stage)]
+        legacy_path = self.publishing_state_dir / f"{stage}.json"
+        if legacy_path not in state_paths:
+            state_paths.append(legacy_path)
+        for path in state_paths:
+            if path.exists():
+                path.unlink()

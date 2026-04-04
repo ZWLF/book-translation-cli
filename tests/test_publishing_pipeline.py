@@ -937,3 +937,23 @@ async def test_deep_review_rerun_preserves_last_good_final_outputs_on_render_fai
 
     assert final_text_path.read_text(encoding="utf-8") == original_text
     assert final_pdf_path.read_text(encoding="utf-8") == original_pdf
+
+
+@pytest.mark.asyncio
+async def test_promote_candidate_release_copies_candidate_final_outputs(tmp_path: Path) -> None:
+    from book_translator.state.workspace import Workspace
+
+    workspace = Workspace(tmp_path / "book")
+    candidate_text = workspace.publishing_candidate_final_text_path
+    candidate_pdf = workspace.publishing_candidate_final_pdf_path
+    candidate_epub = workspace.publishing_candidate_final_epub_path
+    candidate_text.parent.mkdir(parents=True, exist_ok=True)
+    candidate_text.write_text("candidate text", encoding="utf-8")
+    candidate_pdf.write_bytes(b"candidate pdf")
+    candidate_epub.write_bytes(b"candidate epub")
+
+    workspace.promote_candidate_release()
+
+    assert workspace.publishing_final_text_path.read_text(encoding="utf-8") == "candidate text"
+    assert workspace.publishing_final_pdf_path.read_bytes() == b"candidate pdf"
+    assert workspace.publishing_final_epub_path.read_bytes() == b"candidate epub"

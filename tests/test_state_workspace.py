@@ -95,3 +95,70 @@ def test_workspace_persists_title_translations(tmp_path: Path) -> None:
         "chapter-1": "痴迷于成功",
         "chapter-2": "像物理学家一样思考",
     }
+
+
+def test_workspace_exposes_candidate_and_final_paths(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "book")
+
+    assert workspace.publishing_candidate_root_path == workspace.publishing_root_path / "candidate"
+    assert (
+        workspace.publishing_candidate_state_dir
+        == workspace.publishing_candidate_root_path / "state"
+    )
+    assert (
+        workspace.publishing_candidate_final_dir
+        == workspace.publishing_candidate_root_path / "final"
+    )
+    assert (
+        workspace.publishing_candidate_final_text_path
+        == workspace.publishing_candidate_final_dir / "translated.txt"
+    )
+    assert (
+        workspace.publishing_candidate_final_pdf_path
+        == workspace.publishing_candidate_final_dir / "translated.pdf"
+    )
+    assert (
+        workspace.publishing_candidate_final_epub_path
+        == workspace.publishing_candidate_final_dir / "translated.epub"
+    )
+    assert workspace.publishing_final_text_path == workspace.publishing_root_path / "final" / "translated.txt"
+    assert workspace.publishing_final_pdf_path == workspace.publishing_root_path / "final" / "translated.pdf"
+    assert workspace.publishing_final_epub_path == workspace.publishing_root_path / "final" / "translated.epub"
+
+
+def test_failed_candidate_build_does_not_require_final_cleanup(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "book")
+
+    stable_paths = (
+        workspace.publishing_final_text_path,
+        workspace.publishing_final_pdf_path,
+        workspace.publishing_final_epub_path,
+    )
+    candidate_paths = (
+        workspace.publishing_candidate_final_text_path,
+        workspace.publishing_candidate_final_pdf_path,
+        workspace.publishing_candidate_final_epub_path,
+    )
+    audit_paths = (
+        workspace.publishing_audit_source_path,
+        workspace.publishing_audit_review_path,
+        workspace.publishing_audit_consensus_path,
+        workspace.publishing_audit_report_path,
+    )
+    for path in stable_paths + candidate_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(path.name, encoding="utf-8")
+    for path in audit_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(path.name, encoding="utf-8")
+
+    candidate_state_path = workspace.publishing_candidate_state_dir / "deep-review.json"
+    candidate_state_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_state_path.write_text("{}", encoding="utf-8")
+
+    workspace.clear_publishing_stage_outputs("deep-review")
+
+    assert all(path.exists() for path in stable_paths)
+    assert not any(path.exists() for path in candidate_paths)
+    assert not any(path.exists() for path in audit_paths)
+    assert not candidate_state_path.exists()
