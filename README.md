@@ -11,6 +11,19 @@ Command-line tool for translating text-based PDF and EPUB books into Simplified 
 
 The top-level command remains an alias to `engineering` for compatibility.
 
+## GUI
+
+The desktop GUI is a separate local entry point built on the same translation pipelines. It is a companion to the CLI, not a replacement for it.
+
+Use the GUI when you want an interactive local app with engineering and publishing modes, progress updates, logs, and results views. Use the CLI when you want automation, scripting, or batch runs.
+
+Launch the GUI with either command:
+
+```bash
+book-translator-gui
+python -m book_translator.gui
+```
+
 ## Features
 
 - Extract text from text-based PDF and EPUB files

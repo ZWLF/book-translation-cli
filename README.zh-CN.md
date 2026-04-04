@@ -11,6 +11,19 @@
 
 为了兼容旧用法，顶层命令仍然是 `engineering` 的别名。
 
+## GUI
+
+桌面 GUI 是一个独立的本地入口，和 CLI 共用同一套翻译流水线。它是 CLI 的补充，不是替代品。
+
+GUI 适合需要交互式本地应用的场景，提供工程化和出版级两种模式，以及进度、日志和结果视图。CLI 仍然是自动化、脚本和批处理的首选入口。
+
+启动 GUI 可使用以下任一命令：
+
+```bash
+book-translator-gui
+python -m book_translator.gui
+```
+
 ## 功能
 
 - 从文字版 PDF 和 EPUB 中提取正文
