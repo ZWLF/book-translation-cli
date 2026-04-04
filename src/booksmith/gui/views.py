@@ -237,28 +237,39 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
 
     run_body = ttk.Frame(run_section, padding=(0, 0, 0, 4))
     run_body.grid(row=0, column=0, sticky="ew")
-    run_body.columnconfigure(1, weight=1)
+    run_body.columnconfigure(0, weight=1)
 
-    run_button = ttk.Button(run_body, text="Run")
+    run_action_row = ttk.Frame(run_body)
+    run_action_row.grid(row=0, column=0, sticky="ew")
+    run_action_row.columnconfigure(1, weight=1)
+
+    run_button = ttk.Button(run_action_row, text="Run", width=14)
     run_button.grid(row=0, column=0, sticky="w")
-    ttk.Label(run_body, textvariable=status_var, font=("TkDefaultFont", 10, "bold")).grid(
+    ttk.Label(
+        run_action_row,
+        textvariable=status_var,
+        font=("TkDefaultFont", 10, "bold"),
+    ).grid(
         row=0,
         column=1,
         sticky="w",
         padx=(16, 0),
     )
-    ttk.Label(run_body, text="Stage").grid(row=1, column=0, sticky="w", pady=(10, 0))
-    ttk.Label(run_body, textvariable=stage_var).grid(
-        row=1,
+
+    run_meta_row = ttk.Frame(run_body)
+    run_meta_row.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+    run_meta_row.columnconfigure(1, weight=1)
+
+    ttk.Label(run_meta_row, text="Current step").grid(row=0, column=0, sticky="w")
+    ttk.Label(run_meta_row, textvariable=stage_var).grid(
+        row=0,
         column=1,
         sticky="w",
         padx=(16, 0),
-        pady=(10, 0),
     )
-    ttk.Label(run_body, textvariable=summary_var, wraplength=780).grid(
+    ttk.Label(run_body, textvariable=summary_var, wraplength=760).grid(
         row=2,
         column=0,
-        columnspan=2,
         sticky="w",
         pady=(10, 0),
     )
@@ -268,7 +279,7 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
         mode="determinate",
         maximum=1.0,
         variable=progress_var,
-    ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+    ).grid(row=3, column=0, sticky="ew", pady=(12, 0))
 
     _add_section_heading(
         outer,
@@ -283,28 +294,37 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
 
     results_body = ttk.Frame(results_section, padding=(0, 0, 0, 4))
     results_body.grid(row=0, column=0, sticky="ew")
-    results_body.columnconfigure(1, weight=1)
+    results_body.columnconfigure(0, weight=1)
+
+    ttk.Label(results_body, text="Ready artifacts appear here when a run finishes.").grid(
+        row=0,
+        column=0,
+        sticky="w",
+    )
+
+    results_actions = ttk.Frame(results_body)
+    results_actions.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+    results_actions.columnconfigure(1, weight=1)
 
     result_buttons: dict[str, ttk.Button] = {}
     result_path_vars: dict[str, tk.StringVar] = {}
 
     result_specs = [
-        ("open_output_folder", "Output folder"),
-        ("open_run_summary", "Run summary"),
-        ("open_translated_txt", "translated.txt"),
-        ("open_translated_pdf", "translated.pdf"),
-        ("open_translated_epub", "translated.epub"),
-        ("open_audit_report", "final_audit_report.json"),
+        ("open_output_folder", "Open output folder"),
+        ("open_run_summary", "Open run summary"),
+        ("open_translated_txt", "Open translated text"),
+        ("open_translated_pdf", "Open translated PDF"),
+        ("open_translated_epub", "Open translated EPUB"),
+        ("open_audit_report", "Open audit report"),
     ]
     for row_index, (key, label) in enumerate(result_specs):
         path_var = tk.StringVar(master=root, value="")
         result_path_vars[key] = path_var
-        ttk.Label(results_body, text=label).grid(row=row_index, column=0, sticky="w")
-        button = ttk.Button(results_body, text="Open")
-        button.grid(row=row_index, column=1, sticky="w", padx=(12, 0), pady=(0, 6))
-        ttk.Label(results_body, textvariable=path_var).grid(
+        button = ttk.Button(results_actions, text=label, width=22)
+        button.grid(row=row_index, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(results_actions, textvariable=path_var, wraplength=540).grid(
             row=row_index,
-            column=2,
+            column=1,
             sticky="w",
             padx=(12, 0),
         )
@@ -326,13 +346,15 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
     log_body = ttk.Frame(log_section, padding=(0, 0, 0, 4))
     log_body.grid(row=0, column=0, sticky="nsew")
     log_body.columnconfigure(0, weight=1)
-    log_body.rowconfigure(0, weight=1)
+    log_body.rowconfigure(1, weight=1)
 
-    log_text = tk.Text(log_body, height=9, wrap="word")
+    ttk.Label(log_body, text="Recent events").grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+    log_text = tk.Text(log_body, height=7, wrap="word")
     log_scrollbar = ttk.Scrollbar(log_body, orient="vertical", command=log_text.yview)
     log_text.configure(yscrollcommand=log_scrollbar.set, state="disabled")
-    log_text.grid(row=0, column=0, sticky="nsew")
-    log_scrollbar.grid(row=0, column=1, sticky="ns")
+    log_text.grid(row=1, column=0, sticky="nsew")
+    log_scrollbar.grid(row=1, column=1, sticky="ns")
 
     footer = ttk.Label(
         outer,

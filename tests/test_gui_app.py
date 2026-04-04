@@ -41,6 +41,14 @@ def _visible_widget_texts(parent: tk.Misc, widget_type: type[tk.Widget]) -> list
     return texts
 
 
+def _visible_result_action_keys(app: BooksmithGui) -> set[str]:
+    return {
+        key
+        for key, button in app.views.result_buttons.items()
+        if button.winfo_manager()
+    }
+
+
 class _FakeTaskRunner:
     def __init__(self) -> None:
         self.event_queue: Queue[dict[str, object]] = Queue()
@@ -236,6 +244,7 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         app._start_run()
         assert app.event_queue is runner.event_queue
         assert len(runner.started_requests) == 1
+        assert _visible_result_action_keys(app) == set()
 
         runner.event_queue.put(
             {
@@ -262,6 +271,7 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         assert app.run_state.progress_fraction == 0.5
         assert app.status_var.get() == "Running"
         assert app.result_state.output_paths == ()
+        assert _visible_result_action_keys(app) == set()
 
         runner.event_queue.put(
             {
@@ -302,7 +312,7 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         assert request.input_path == input_path
         assert request.output_path == output_path
         assert app.status_var.get() == "Completed"
-        assert "3 successful chunks" in app.summary_var.get()
+        assert app.summary_var.get() == "2/2 books | 3 ok, 1 failed | $1.25 | 12.5s"
         assert app.run_state.successful_chunks == 3
         assert app.run_state.failed_chunks == 1
         assert app.run_state.estimated_cost_usd == 1.25
@@ -314,10 +324,12 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
             workspace_root / "translated.txt",
             workspace_root / "translated.pdf",
         )
-        assert app.views.result_buttons["open_output_folder"].winfo_manager() == "grid"
-        assert app.views.result_buttons["open_run_summary"].winfo_manager() == "grid"
-        assert app.views.result_buttons["open_translated_txt"].winfo_manager() == "grid"
-        assert app.views.result_buttons["open_translated_pdf"].winfo_manager() == "grid"
+        assert _visible_result_action_keys(app) == {
+            "open_output_folder",
+            "open_run_summary",
+            "open_translated_txt",
+            "open_translated_pdf",
+        }
     finally:
         app.root.destroy()
 
@@ -674,7 +686,7 @@ def test_gui_run_completed_aggregates_multi_book_summaries(tmp_path: Path) -> No
         assert app.run_state.failed_chunks == 3
         assert app.run_state.estimated_cost_usd == 3.25
         assert app.run_state.elapsed_seconds == 20.0
-        assert "13 successful chunks" in app.summary_var.get()
+        assert app.summary_var.get() == "2/2 books | 13 ok, 3 failed | $3.25 | 20.0s"
         assert app.views.result_buttons["open_output_folder"].winfo_manager() == "grid"
     finally:
         app.root.destroy()
