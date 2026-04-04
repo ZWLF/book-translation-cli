@@ -270,6 +270,56 @@ def test_run_deep_review_builds_structured_book_and_audit_report() -> None:
     }
 
 
+def test_run_deep_review_forwards_source_title_to_source_audit(monkeypatch) -> None:
+    seen_titles: list[str | None] = []
+
+    def fake_audit_source_against_target(
+        *,
+        chapter_id: str,
+        source_text: str,
+        target_text: str,
+        source_title: str | None = None,
+    ) -> list[PublishingAuditFinding]:
+        seen_titles.append(source_title)
+        return []
+
+    monkeypatch.setattr(
+        "book_translator.publishing.deep_review.audit_source_against_target",
+        fake_audit_source_against_target,
+    )
+
+    source_chapters = [
+        Chapter(
+            chapter_id="chapter-1",
+            chapter_index=0,
+            title="Create more than you consume.",
+            text=(
+                "Create more than you consume.\n\n"
+                "Build things.\n"
+                "Serve people."
+            ),
+        )
+    ]
+    final_artifacts = [
+        PublishingChapterArtifact(
+            chapter_id="chapter-1",
+            chapter_index=0,
+            title="Create more than you consume.",
+            text=(
+                "创造的多于消费。\n\n"
+                "打造产品。\n"
+                "服务他人。"
+            ),
+        )
+    ]
+
+    result = run_deep_review(source_chapters=source_chapters, final_artifacts=final_artifacts)
+
+    assert seen_titles
+    assert seen_titles == ["Create more than you consume."] * len(seen_titles)
+    assert result.final_report["source_finding_count"] == 0
+
+
 def test_assemble_structured_publishing_output_text_preserves_ordered_items() -> None:
     book = StructuredPublishingBook(
         title="Sample Book",

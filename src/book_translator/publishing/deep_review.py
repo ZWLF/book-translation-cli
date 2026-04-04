@@ -115,6 +115,7 @@ def run_deep_review(
             chapter_id=artifact.chapter_id,
             source_text=source_chapter.text,
             target_text=artifact.text,
+            source_title=source_chapter.title,
         )
         source_findings.extend(chapter_source_findings)
 
@@ -131,6 +132,7 @@ def run_deep_review(
                 chapter_id=artifact.chapter_id,
                 source_text=source_chapter.text,
                 target_text=structured_chapter_body,
+                source_title=source_chapter.title,
             )
         else:
             chapter_review_findings = []
@@ -145,6 +147,7 @@ def run_deep_review(
                 chapter_id=artifact.chapter_id,
                 source_text=source_chapter.text,
                 target_text=structured_chapter_body,
+                source_title=source_chapter.title,
                 consensus=consensus,
             )
             arbiter_findings.extend(chapter_arbiter_findings)
@@ -170,6 +173,7 @@ def run_deep_review(
             chapter_id=artifact.chapter_id,
             source_text=source_chapter.text,
             target_text=final_text,
+            source_title=source_chapter.title,
         )
         confirmation_findings.extend(chapter_confirmation_findings)
         release_blocking_findings.extend(chapter_confirmation_findings)
@@ -301,6 +305,7 @@ def _run_arbiter_review(
     chapter_id: str,
     source_text: str,
     target_text: str,
+    source_title: str | None,
     consensus: PublishingFindingConsensusResult,
 ) -> list[PublishingAuditFinding]:
     disputed_items = build_arbitration_queue(consensus.disputed)
@@ -311,6 +316,7 @@ def _run_arbiter_review(
         chapter_id=chapter_id,
         source_text=source_text,
         target_text=target_text,
+        source_title=source_title,
     )
     findings: list[PublishingAuditFinding] = []
     for candidate in arbiter_candidates:

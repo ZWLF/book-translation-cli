@@ -113,6 +113,25 @@ def test_audit_does_not_flag_hard_wrapped_paragraph_as_omission() -> None:
     assert _finding_types(findings) == []
 
 
+def test_audit_ignores_leading_source_title_when_it_is_modeled_separately() -> None:
+    findings = audit_source_against_target(
+        chapter_id="c7b",
+        source_title="Create more than you consume.",
+        source_text=(
+            "Create more than you consume.\n\n"
+            "Build things.\n"
+            "Serve people."
+        ),
+        target_text=(
+            "创造的多于消费。\n\n"
+            "打造产品。\n"
+            "服务他人。"
+        ),
+    )
+
+    assert _finding_types(findings) == []
+
+
 def test_audit_does_not_misclassify_partially_preserved_block_list_as_collapsed() -> None:
     findings = audit_source_against_target(
         chapter_id="c8",
@@ -123,6 +142,39 @@ def test_audit_does_not_misclassify_partially_preserved_block_list_as_collapsed(
     assert _finding_types(findings) == ["list_structure_loss", "possible_omission"]
     assert findings[0].source_signature == "list_structure_loss:1-2-3-4-5"
     assert findings[1].source_signature == "possible_omission:2:4-four-5-five"
+
+
+def test_audit_detects_non_one_based_numbered_runs_as_list_structure() -> None:
+    findings = audit_source_against_target(
+        chapter_id="c8b",
+        source_text="4. One.\n5. Two.\n6. Three.",
+        target_text="4. One 5. Two 6. Three",
+    )
+
+    assert _finding_types(findings) == [
+        "collapsed_numbered_list",
+        "list_structure_loss",
+    ]
+    assert findings[0].source_signature == "collapsed_numbered_list:4-5-6"
+    assert findings[1].source_signature == "list_structure_loss:4-5-6"
+
+
+def test_audit_keeps_cross_language_prose_conservative_when_coverage_is_substantial() -> None:
+    findings = audit_source_against_target(
+        chapter_id="c8c",
+        source_text=(
+            "Elon built companies by taking risks. "
+            "He read widely and thought from first principles. "
+            "He learned from physics. "
+            "He acted quickly when the evidence was clear."
+        ),
+        target_text=(
+            "埃隆通过承担风险来建立公司，并以第一性原理思考。\n\n"
+            "他广泛阅读，学习物理学，并在证据清晰时迅速行动。"
+        ),
+    )
+
+    assert _finding_types(findings) == []
 
 
 def test_audit_populates_richer_finding_shape_for_non_autofixable_results() -> None:
