@@ -1,5 +1,5 @@
-from book_translator.chunking.splitter import split_chapter_into_chunks
-from book_translator.models import Chapter
+from booksmith.chunking.splitter import split_chapter_into_chunks
+from booksmith.models import Chapter
 
 
 def test_split_chapter_into_chunks_preserves_order() -> None:

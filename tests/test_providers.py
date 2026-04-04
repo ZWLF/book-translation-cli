@@ -1,10 +1,10 @@
 import httpx
 import pytest
 
-from book_translator.models import TranslationRequest
-from book_translator.providers.gemini_provider import GeminiProvider
-from book_translator.providers.openai_provider import OpenAIProvider
-from book_translator.translation.retries import is_retryable_exception
+from booksmith.models import TranslationRequest
+from booksmith.providers.gemini_provider import GeminiProvider
+from booksmith.providers.openai_provider import OpenAIProvider
+from booksmith.translation.retries import is_retryable_exception
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from book_translator.models import PublishingGateInputs
-from book_translator.publishing.release_gate import (
+from booksmith.models import PublishingGateInputs
+from booksmith.publishing.release_gate import (
     compute_quality_score,
     evaluate_release_gate,
 )

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from book_translator.models import Chunk, Manifest, TranslationResult
-from book_translator.state.workspace import Workspace
+from booksmith.models import Chunk, Manifest, TranslationResult
+from booksmith.state.workspace import Workspace
 
 
 def test_workspace_persists_translations_and_errors(tmp_path: Path) -> None:

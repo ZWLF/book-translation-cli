@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from book_translator.models import PublishingChapterArtifact
-from book_translator.publishing.structure import build_structured_chapter
+from booksmith.models import PublishingChapterArtifact
+from booksmith.publishing.structure import build_structured_chapter
 
 
 def test_structure_builder_splits_numbered_items_into_ordered_blocks() -> None:

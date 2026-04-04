@@ -6,28 +6,28 @@ from ebooklib import epub
 from reportlab.pdfgen import canvas
 from typer.testing import CliRunner
 
-import book_translator.publishing.pipeline as publishing_pipeline
-from book_translator.cli import app
-from book_translator.config import (
+import booksmith.publishing.pipeline as publishing_pipeline
+from booksmith.cli import app
+from booksmith.config import (
     PublishingOutputSelection,
     PublishingRunConfig,
     resolve_publishing_outputs,
 )
-from book_translator.models import (
+from booksmith.models import (
     Manifest,
     PublishingBlock,
     PublishingChapterArtifact,
     StructuredPublishingBook,
     StructuredPublishingChapter,
 )
-from book_translator.providers.base import BaseProvider
-from book_translator.publishing.final_review import apply_final_review
-from book_translator.publishing.pipeline import (
+from booksmith.providers.base import BaseProvider
+from booksmith.publishing.final_review import apply_final_review
+from booksmith.publishing.pipeline import (
     _rebuild_stable_publishing_outputs,
     process_book_publishing,
 )
-from book_translator.publishing.proofread import proofread_chapter
-from book_translator.publishing.revision import revise_chapter
+from booksmith.publishing.proofread import proofread_chapter
+from booksmith.publishing.revision import revise_chapter
 
 runner = CliRunner()
 
@@ -138,7 +138,7 @@ def test_publishing_cli_passes_new_flags_into_config(
         captured["output_path"] = output_path
         captured["config"] = config
 
-    monkeypatch.setattr("book_translator.cli._run_publishing_cli", fake_run_publishing_cli)
+    monkeypatch.setattr("booksmith.cli._run_publishing_cli", fake_run_publishing_cli)
 
     result = runner.invoke(
         app,
@@ -291,7 +291,7 @@ async def test_rebuild_stable_publishing_outputs_routes_primary_and_extra_format
 ) -> None:
     workspace = tmp_path / "book"
     workspace.mkdir()
-    from book_translator.state.workspace import Workspace
+    from booksmith.state.workspace import Workspace
 
     book_workspace = Workspace(workspace)
     manifest = Manifest(
@@ -363,23 +363,23 @@ async def test_rebuild_stable_publishing_outputs_routes_primary_and_extra_format
         path.write_bytes(b"epub")
 
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.enrich_missing_titles",
+        "booksmith.publishing.pipeline.enrich_missing_titles",
         fake_enrich_missing_titles,
     )
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.build_printable_book_from_artifacts",
+        "booksmith.publishing.pipeline.build_printable_book_from_artifacts",
         fake_build_printable_book_from_artifacts,
     )
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.build_printable_book_from_structured_book",
+        "booksmith.publishing.pipeline.build_printable_book_from_structured_book",
         fake_build_printable_book_from_structured_book,
     )
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.render_polished_pdf",
+        "booksmith.publishing.pipeline.render_polished_pdf",
         fake_render_polished_pdf,
     )
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.render_structured_epub",
+        "booksmith.publishing.pipeline.render_structured_epub",
         fake_render_structured_epub,
     )
 
@@ -620,7 +620,7 @@ async def test_process_book_publishing_reruns_deep_review_when_dependency_source
         provider=DeepReviewProvider(),
     )
 
-    from book_translator.state.workspace import Workspace
+    from booksmith.state.workspace import Workspace
 
     workspace = Workspace(tmp_path / "out" / "deep-review")
     initial_state = workspace.read_publishing_stage_state("deep-review")
@@ -648,7 +648,7 @@ async def test_process_book_publishing_reruns_deep_review_when_dependency_source
         )
 
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.run_deep_review",
+        "booksmith.publishing.pipeline.run_deep_review",
         wrapped_run_deep_review,
     )
     dependency_path.write_text(updated_content, encoding="utf-8")
@@ -734,11 +734,11 @@ async def test_final_review_cache_hit_survives_rebuild_written_title_translation
         raise AssertionError("final-review should have been skipped on cache hit")
 
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.enrich_missing_titles",
+        "booksmith.publishing.pipeline.enrich_missing_titles",
         fake_enrich_missing_titles,
     )
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.render_polished_pdf",
+        "booksmith.publishing.pipeline.render_polished_pdf",
         fake_render_polished_pdf,
     )
 
@@ -754,7 +754,7 @@ async def test_final_review_cache_hit_survives_rebuild_written_title_translation
     )
 
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.apply_final_review",
+        "booksmith.publishing.pipeline.apply_final_review",
         fail_if_final_review_called,
     )
 
@@ -806,11 +806,11 @@ async def test_process_book_publishing_rebuilds_pdf_when_title_translations_chan
         )
 
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.enrich_missing_titles",
+        "booksmith.publishing.pipeline.enrich_missing_titles",
         fake_enrich_missing_titles,
     )
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.render_polished_pdf",
+        "booksmith.publishing.pipeline.render_polished_pdf",
         fake_render_polished_pdf,
     )
 
@@ -985,11 +985,11 @@ async def test_deep_review_rerun_preserves_last_good_final_outputs_on_render_fai
         path.write_text("stable pdf", encoding="utf-8")
 
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.enrich_missing_titles",
+        "booksmith.publishing.pipeline.enrich_missing_titles",
         fake_enrich_missing_titles,
     )
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.render_polished_pdf",
+        "booksmith.publishing.pipeline.render_polished_pdf",
         fake_render_polished_pdf,
     )
 
@@ -1021,7 +1021,7 @@ async def test_deep_review_rerun_preserves_last_good_final_outputs_on_render_fai
         raise RuntimeError("render failed")
 
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.render_polished_pdf",
+        "booksmith.publishing.pipeline.render_polished_pdf",
         raising_render_polished_pdf,
     )
 
@@ -1044,7 +1044,7 @@ async def test_deep_review_rerun_preserves_last_good_final_outputs_on_render_fai
 
 @pytest.mark.asyncio
 async def test_promote_candidate_release_copies_candidate_final_outputs(tmp_path: Path) -> None:
-    from book_translator.state.workspace import Workspace
+    from booksmith.state.workspace import Workspace
 
     workspace = Workspace(tmp_path / "book")
     candidate_text = workspace.publishing_candidate_final_text_path
@@ -1070,14 +1070,14 @@ async def test_failed_gate_keeps_existing_final_release(
     input_path = tmp_path / "sample.epub"
     _build_sample_epub(input_path)
 
-    from book_translator.state.workspace import Workspace
+    from booksmith.state.workspace import Workspace
 
     workspace = Workspace(tmp_path / "out" / "sample")
     workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
     workspace.publishing_final_text_path.write_text("approved release", encoding="utf-8")
 
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.evaluate_release_gate",
+        "booksmith.publishing.pipeline.evaluate_release_gate",
         lambda inputs: {
             "release_status": "failed",
             "promotion_performed": False,
@@ -1112,7 +1112,7 @@ async def test_passing_gate_promotes_candidate_outputs(
     _build_sample_epub(input_path)
 
     monkeypatch.setattr(
-        "book_translator.publishing.pipeline.evaluate_release_gate",
+        "booksmith.publishing.pipeline.evaluate_release_gate",
         lambda inputs: {
             "release_status": "passed",
             "promotion_performed": True,

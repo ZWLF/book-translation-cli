@@ -1,5 +1,5 @@
-from book_translator.models import Chapter, Chunk, TranslationResult
-from book_translator.output.assembler import assemble_output_text
+from booksmith.models import Chapter, Chunk, TranslationResult
+from booksmith.output.assembler import assemble_output_text
 
 
 def test_assembler_skips_chapters_without_chunks() -> None:

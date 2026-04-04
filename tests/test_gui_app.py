@@ -7,11 +7,11 @@ from queue import Queue
 
 import pytest
 
-from book_translator.gui.app import BookTranslatorGui
-from book_translator.gui.services import GuiFormValidationError, GuiValidationIssue
-from book_translator.gui.state import GuiRuntimeRequest
-from book_translator.gui.tasks import GuiTaskRunner
-from book_translator.utils import slugify
+from booksmith.gui.app import BookTranslatorGui
+from booksmith.gui.services import GuiFormValidationError, GuiValidationIssue
+from booksmith.gui.state import GuiRuntimeRequest
+from booksmith.gui.tasks import GuiTaskRunner
+from booksmith.utils import slugify
 
 
 def _create_gui(**kwargs: object) -> BookTranslatorGui:
@@ -809,6 +809,6 @@ def test_gui_entry_points_are_declarable() -> None:
 
     assert pyproject["project"]["scripts"]["book-translator-gui"] == "book_translator.gui.app:main"
 
-    from book_translator.gui import __main__ as module_main
+    from booksmith.gui import __main__ as module_main
 
     assert callable(module_main.main)

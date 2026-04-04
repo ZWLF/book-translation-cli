@@ -4,9 +4,9 @@ from pathlib import Path
 from reportlab.pdfgen import canvas
 from typer.testing import CliRunner
 
-from book_translator.cli import app
-from book_translator.output.pdf_raster import choose_sample_pages, parse_page_spec, render_pdf_pages
-from book_translator.state.workspace import Workspace
+from booksmith.cli import app
+from booksmith.output.pdf_raster import choose_sample_pages, parse_page_spec, render_pdf_pages
+from booksmith.state.workspace import Workspace
 
 
 def _build_sample_pdf(path: Path, total_pages: int = 4) -> None:

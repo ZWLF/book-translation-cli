@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from book_translator.publishing.lexicon import (
+from booksmith.publishing.lexicon import (
     merge_lexicon_overrides,
     normalize_lexicon_records,
 )
-from book_translator.state.workspace import Workspace
+from booksmith.state.workspace import Workspace
 
 
 def test_normalize_lexicon_records_deduplicates_terms() -> None:

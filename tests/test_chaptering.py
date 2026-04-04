@@ -1,5 +1,5 @@
-from book_translator.chaptering.detect import detect_chapters
-from book_translator.models import ExtractedBook, TocEntry
+from booksmith.chaptering.detect import detect_chapters
+from booksmith.models import ExtractedBook, TocEntry
 
 
 def test_detect_chapters_prefers_toc_titles() -> None:

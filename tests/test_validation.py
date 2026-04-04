@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from book_translator.publishing.validation import (
+from booksmith.publishing.validation import (
     summarize_visual_blockers,
     validate_epub_output,
     validate_primary_output,

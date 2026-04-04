@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from book_translator.app_services import (
+from booksmith.app_services import (
     BookDiscoveryError,
     run_engineering_books_sync,
     run_publishing_books_sync,
 )
-from book_translator.config import PublishingRunConfig, RunConfig
-from book_translator.models import BookRunSummary
+from booksmith.config import PublishingRunConfig, RunConfig
+from booksmith.models import BookRunSummary
 
 
 def _engineering_summary() -> BookRunSummary:

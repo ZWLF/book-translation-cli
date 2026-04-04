@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from book_translator.output.polished_pdf import PrintableBlock, PrintableBook, PrintableChapter
-from book_translator.output.title_enrichment import enrich_missing_titles
-from book_translator.state.workspace import Workspace
+from booksmith.output.polished_pdf import PrintableBlock, PrintableBook, PrintableChapter
+from booksmith.output.title_enrichment import enrich_missing_titles
+from booksmith.state.workspace import Workspace
 
 
 def _book() -> PrintableBook:

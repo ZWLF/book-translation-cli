@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from book_translator.config import PublishingRunConfig, RunConfig
-from book_translator.gui.services import (
+from booksmith.config import PublishingRunConfig, RunConfig
+from booksmith.gui.services import (
     GuiFormState,
     GuiFormValidationError,
     build_runtime_request,

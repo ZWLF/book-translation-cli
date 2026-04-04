@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from book_translator.cli import _supports_spinner, app
+from booksmith.cli import _supports_spinner, app
 
 runner = CliRunner()
 
@@ -56,7 +56,7 @@ def test_cli_empty_input_translates_to_bad_parameter_without_progress(
         progress_started = True
         raise AssertionError("progress should not be created for empty input")
 
-    monkeypatch.setattr("book_translator.cli._build_progress", fail_if_progress_is_created)
+    monkeypatch.setattr("booksmith.cli._build_progress", fail_if_progress_is_created)
 
     result = runner.invoke(
         app,
