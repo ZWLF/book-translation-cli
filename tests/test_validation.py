@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from book_translator.publishing.validation import (
@@ -9,26 +10,86 @@ from book_translator.publishing.validation import (
 )
 
 
-def test_validate_epub_output_reports_missing_navigation(tmp_path) -> None:
-    broken_epub = tmp_path / "broken.epub"
-    with ZipFile(broken_epub, "w") as archive:
+def _write_epub(
+    path: Path,
+    *,
+    rootfile_path: str,
+    include_nav: bool,
+) -> None:
+    with ZipFile(path, "w") as archive:
         archive.writestr("mimetype", "application/epub+zip", compress_type=ZIP_DEFLATED)
         archive.writestr(
             "META-INF/container.xml",
-            """<?xml version="1.0" encoding="utf-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+            f"""<?xml version="1.0" encoding="utf-8"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
   <rootfiles>
-    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+    <rootfile media-type="application/oebps-package+xml" full-path="{rootfile_path}"/>
   </rootfiles>
 </container>
 """,
         )
-        archive.writestr("OEBPS/content.opf", "<package></package>")
+        archive.writestr(
+            rootfile_path,
+            """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <manifest>
+    <item id="chapter-1" href="chapter-001.xhtml" media-type="application/xhtml+xml"/>
+    {nav_item}
+  </manifest>
+  <spine>
+    <itemref idref="chapter-1"/>
+  </spine>
+</package>
+""".format(
+                nav_item=(
+                    '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
+                    'properties="nav"/>'
+                    if include_nav
+                    else ""
+                )
+            ),
+        )
+        if include_nav:
+            archive.writestr(
+                str(Path(rootfile_path).parent / "nav.xhtml"),
+                """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <nav epub:type="toc">
+      <ol><li><a href="chapter-001.xhtml">Chapter 1</a></li></ol>
+    </nav>
+  </body>
+</html>
+""",
+            )
+        archive.writestr(
+            str(Path(rootfile_path).parent / "chapter-001.xhtml"),
+            """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body><p>Sample chapter.</p></body>
+</html>
+""",
+        )
+
+
+def test_validate_epub_output_accepts_epub_root_path(tmp_path: Path) -> None:
+    epub_path = tmp_path / "sample.epub"
+    _write_epub(epub_path, rootfile_path="EPUB/content.opf", include_nav=True)
+
+    output = validate_epub_output(epub_path)
+
+    assert output["passed"] is True
+    assert output["missing"] == []
+
+
+def test_validate_epub_output_reports_missing_navigation(tmp_path: Path) -> None:
+    broken_epub = tmp_path / "broken.epub"
+    _write_epub(broken_epub, rootfile_path="EPUB/content.opf", include_nav=False)
 
     output = validate_epub_output(broken_epub)
 
     assert output["passed"] is False
-    assert "OEBPS/nav.xhtml" in output["missing"]
+    assert "EPUB/nav.xhtml" in output["missing"]
 
 
 def test_validate_primary_output_accepts_nonempty_pdf(tmp_path) -> None:
