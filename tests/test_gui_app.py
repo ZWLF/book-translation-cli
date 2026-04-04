@@ -8,6 +8,7 @@ from queue import Queue
 import pytest
 
 from book_translator.gui.app import BookTranslatorGui
+from book_translator.gui.services import GuiFormValidationError, GuiValidationIssue
 from book_translator.gui.state import GuiRuntimeRequest
 from book_translator.gui.tasks import GuiTaskRunner
 from book_translator.utils import slugify
@@ -28,6 +29,17 @@ class _FakeTaskRunner:
 
     def start(self, request: GuiRuntimeRequest) -> None:
         self.started_requests.append(request)
+
+
+class _FailingStartTaskRunner:
+    def __init__(self, exc: Exception) -> None:
+        self.event_queue: Queue[dict[str, object]] = Queue()
+        self.started_requests: list[GuiRuntimeRequest] = []
+        self._exc = exc
+
+    def start(self, request: GuiRuntimeRequest) -> None:
+        self.started_requests.append(request)
+        raise self._exc
 
 
 def _configure_engineering_form(
@@ -202,6 +214,62 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         app.root.destroy()
 
 
+def test_gui_start_run_validation_error_is_handled_inline_without_raising(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeTaskRunner()
+
+    def _raise_validation_error(_form: object) -> GuiRuntimeRequest:
+        raise GuiFormValidationError(
+            [GuiValidationIssue(field="input_path", message="validation boom")]
+        )
+
+    app = _create_gui(task_runner=runner, request_builder=_raise_validation_error)
+    input_path = tmp_path / "book.pdf"
+    input_path.write_text("pdf", encoding="utf-8")
+    output_path = tmp_path / "out"
+
+    try:
+        _configure_engineering_form(app, input_path, output_path)
+
+        app._start_run()
+
+        assert app.status_var.get() == "Failed"
+        assert app.summary_var.get() == "input_path: validation boom"
+        assert app.result_state.error == "input_path: validation boom"
+        assert "validation boom" in app.log_text.get("1.0", "end")
+        assert not app.run_button.instate(["disabled"])
+        assert app._queue_poll_after_id is None
+        assert runner.started_requests == []
+    finally:
+        app.root.destroy()
+
+
+def test_gui_start_run_runner_start_error_is_handled_inline_without_raising(
+    tmp_path: Path,
+) -> None:
+    runner = _FailingStartTaskRunner(RuntimeError("runner start boom"))
+    app = _create_gui(task_runner=runner)
+    input_path = tmp_path / "book.pdf"
+    input_path.write_text("pdf", encoding="utf-8")
+    output_path = tmp_path / "out"
+
+    try:
+        _configure_engineering_form(app, input_path, output_path)
+
+        app._start_run()
+
+        assert app.status_var.get() == "Failed"
+        assert app.summary_var.get() == "runner start boom"
+        assert app.result_state.error == "runner start boom"
+        assert "runner start boom" in app.log_text.get("1.0", "end")
+        assert not app.run_button.instate(["disabled"])
+        assert app._queue_poll_after_id is None
+        assert len(runner.started_requests) == 1
+    finally:
+        app.root.destroy()
+
+
 def test_gui_handles_book_failed_event(tmp_path: Path) -> None:
     runner = _FakeTaskRunner()
     app = _create_gui(task_runner=runner)
@@ -260,6 +328,131 @@ def test_gui_handles_book_failed_event(tmp_path: Path) -> None:
         assert "boom" in app.summary_var.get()
         assert app.result_state.error == "boom"
         assert "Failed book.pdf" in app.log_text.get("1.0", "end")
+    finally:
+        app.root.destroy()
+
+
+def test_gui_run_failed_keeps_multi_book_output_folder_accessible(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeTaskRunner()
+    app = _create_gui(task_runner=runner)
+    input_path = tmp_path / "books"
+    input_path.mkdir()
+    (input_path / "a.pdf").write_text("a", encoding="utf-8")
+    (input_path / "b.epub").write_text("b", encoding="utf-8")
+    output_path = tmp_path / "out"
+    output_path.mkdir()
+
+    try:
+        _configure_engineering_form(app, input_path, output_path)
+        app._start_run()
+
+        runner.event_queue.put(
+            {
+                "type": "run_started",
+                "mode": "engineering",
+                "input_path": str(input_path),
+                "output_path": str(output_path),
+                "total_books": 2,
+            }
+        )
+        runner.event_queue.put(
+            {
+                "type": "book_completed",
+                "mode": "engineering",
+                "book_index": 1,
+                "total_books": 2,
+                "book_path": str(input_path / "a.pdf"),
+                "book_name": "a.pdf",
+                "summary": {
+                    "successful_chunks": 2,
+                    "failed_chunks": 0,
+                    "estimated_cost_usd": 0.5,
+                    "duration_seconds": 4.0,
+                },
+            }
+        )
+        runner.event_queue.put(
+            {
+                "type": "run_failed",
+                "mode": "engineering",
+                "input_path": str(input_path),
+                "output_path": str(output_path),
+                "total_books": 2,
+                "summaries": [],
+                "error": "boom",
+            }
+        )
+        app._poll_runner_events()
+
+        assert app.status_var.get() == "Failed"
+        assert app.views.result_buttons["open_output_folder"].winfo_manager() == "grid"
+        assert app.result_state.error == "boom"
+    finally:
+        app.root.destroy()
+
+
+def test_gui_run_failed_keeps_single_book_result_files_accessible(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeTaskRunner()
+    app = _create_gui(task_runner=runner)
+    input_path = tmp_path / "book.pdf"
+    input_path.write_text("pdf", encoding="utf-8")
+    output_path = tmp_path / "out"
+    workspace_root = output_path / slugify(input_path.stem)
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    (workspace_root / "run_summary.json").write_text("{}", encoding="utf-8")
+    (workspace_root / "translated.txt").write_text("translated", encoding="utf-8")
+
+    try:
+        _configure_engineering_form(app, input_path, output_path)
+        app._start_run()
+
+        runner.event_queue.put(
+            {
+                "type": "run_started",
+                "mode": "engineering",
+                "input_path": str(input_path),
+                "output_path": str(output_path),
+                "total_books": 1,
+            }
+        )
+        runner.event_queue.put(
+            {
+                "type": "book_completed",
+                "mode": "engineering",
+                "book_index": 1,
+                "total_books": 1,
+                "book_path": str(input_path),
+                "book_name": input_path.name,
+                "summary": {
+                    "successful_chunks": 1,
+                    "failed_chunks": 0,
+                    "estimated_cost_usd": 0.25,
+                    "duration_seconds": 3.0,
+                },
+            }
+        )
+        runner.event_queue.put(
+            {
+                "type": "run_failed",
+                "mode": "engineering",
+                "input_path": str(input_path),
+                "output_path": str(output_path),
+                "total_books": 1,
+                "summaries": [],
+                "error": "boom",
+            }
+        )
+        app._poll_runner_events()
+
+        assert app.status_var.get() == "Failed"
+        assert app.views.result_buttons["open_output_folder"].winfo_manager() == "grid"
+        assert app.views.result_buttons["open_run_summary"].winfo_manager() == "grid"
+        assert app.views.result_buttons["open_translated_txt"].winfo_manager() == "grid"
+        assert app.result_state.error == "boom"
     finally:
         app.root.destroy()
 

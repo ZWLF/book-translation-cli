@@ -85,26 +85,33 @@ class BookTranslatorGui:
         )
 
     def _start_run(self) -> None:
-        request = self._request_builder(self._collect_form_state())
-        self.current_request = request
-        self.run_state = GuiRunState(
-            status="running",
-            total_books=len(request.discovered_books) or 1,
-        )
-        self.run_state.message = "Queued"
-        self.run_state.current_stage = "Queued"
-        self.result_state = GuiResultState()
-        self.status_var.set("Running")
-        self.stage_var.set(self.run_state.current_stage)
-        self.summary_var.set("Queued")
-        self.progress_var.set(0.0)
         self._clear_logs()
         self._hide_all_result_actions()
-        self._append_log_line(
-            f"Starting {request.mode} run for {request.input_path} -> {request.output_path}"
-        )
         self.run_button.state(["disabled"])
-        self.task_runner.start(request)
+        self.result_state = GuiResultState()
+
+        request: GuiRuntimeRequest | None = None
+        try:
+            request = self._request_builder(self._collect_form_state())
+            self.current_request = request
+            self.run_state = GuiRunState(
+                status="running",
+                total_books=len(request.discovered_books) or 1,
+            )
+            self.run_state.message = "Queued"
+            self.run_state.current_stage = "Queued"
+            self.status_var.set("Running")
+            self.stage_var.set(self.run_state.current_stage)
+            self.summary_var.set("Queued")
+            self.progress_var.set(0.0)
+            self._append_log_line(
+                f"Starting {request.mode} run for {request.input_path} -> {request.output_path}"
+            )
+            self.task_runner.start(request)
+        except Exception as exc:
+            self._handle_start_failure(exc, request=request)
+            return
+
         self._schedule_queue_poll()
         self._sync_state_widgets()
 
@@ -255,10 +262,33 @@ class BookTranslatorGui:
         self.run_state.message = str(event.get("error") or "Run failed")
         self.run_state.current_stage = "Run failed"
         self.result_state.error = self.run_state.message
+        self.result_state.output_paths = self._compute_result_paths()
+        self.result_state.audit_report_path = self._audit_report_path_for_current_request()
         self._append_log_line(self._format_event_log(event))
-        self.summary_var.set(self.run_state.message)
-        self.status_var.set("Failed")
+        self._refresh_result_actions()
         self.run_button.state(["!disabled"])
+        self._sync_state_widgets()
+
+    def _handle_start_failure(
+        self,
+        exc: Exception,
+        *,
+        request: GuiRuntimeRequest | None,
+    ) -> None:
+        if request is None:
+            self.current_request = None
+        message = str(exc) or exc.__class__.__name__
+        self.run_state = GuiRunState(
+            status="failed",
+            current_stage="Run failed",
+            message=message,
+        )
+        if request is not None:
+            self.run_state.total_books = len(request.discovered_books) or 1
+        self.result_state.error = message
+        self._append_log_line(f"Run start failed: {message}")
+        self.run_button.state(["!disabled"])
+        self._sync_state_widgets()
 
     def _update_progress(self, *, completed_books: int, total_books: int) -> None:
         self.run_state.progress_fraction = self._progress_fraction(completed_books, total_books)
