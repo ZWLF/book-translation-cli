@@ -29,6 +29,10 @@ class GuiTaskRunner:
         self._run_publishing_fn = run_publishing_fn
         self._thread: Thread | None = None
 
+    @property
+    def event_queue(self) -> Queue[GuiEvent]:
+        return self._event_queue
+
     def start(self, request: GuiRuntimeRequest) -> None:
         if self._thread is not None and self._thread.is_alive():
             raise RuntimeError("GuiTaskRunner is already running")
