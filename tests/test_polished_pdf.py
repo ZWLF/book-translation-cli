@@ -1502,7 +1502,7 @@ def test_render_polished_pdf_uses_publishing_front_matter(tmp_path: Path) -> Non
     assert "Codex" in extracted
     assert "Vibe Coding" in extracted
     assert "weiliangzeng03@gmail.com" in extracted
-    assert "https://github.com/ZWLF/book-translation-cli" in extracted
+    assert "https://github.com/ZWLF/booksmith" in extracted
     assert "免费公开" in extracted
     assert "支持我的项目" in extracted
     assert "本次实际翻译成本：$0.120000" in extracted

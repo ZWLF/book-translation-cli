@@ -913,7 +913,7 @@ def _edition_front_matter(book: PrintableBook, edition_label: str) -> EditionFro
                 "开发方式：基于 Codex 的 Vibe Coding 翻译程序",
                 f"模型 API：{book.model}",
                 "联系方式：weiliangzeng03@gmail.com",
-                "项目地址：https://github.com/ZWLF/book-translation-cli",
+                "项目地址：https://github.com/ZWLF/booksmith",
                 "公开说明：本翻译文件免费公开，欢迎大家支持我的项目。",
             ],
         )
