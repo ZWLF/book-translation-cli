@@ -26,7 +26,7 @@ def _create_gui(**kwargs: object) -> BooksmithGui:
 def _visible_widget_texts(parent: tk.Misc, widget_type: type[tk.Widget]) -> list[str]:
     texts: list[str] = []
     for child in parent.winfo_children():
-        if isinstance(child, widget_type) and child.winfo_manager():
+        if isinstance(child, widget_type) and child.winfo_manager() and child.winfo_ismapped():
             texts.append(str(child.cget("text")))
         texts.extend(_visible_widget_texts(child, widget_type))
     return texts
@@ -98,9 +98,50 @@ def test_gui_exposes_publishing_view_refs_for_polished_layout() -> None:
         assert isinstance(app.views.publishing_expanded_var, tk.BooleanVar)
         assert app.views.publishing_expanded_var.get() is False
         assert isinstance(app.views.publishing_toggle_button, ttk.Button)
-        assert app.views.publishing_toggle_button.winfo_manager() == ""
         assert app.views.publishing_advanced_frame.winfo_manager() == ""
-        assert app.views.publishing_advanced_frame.winfo_children() == []
+        assert len(app.views.publishing_advanced_frame.winfo_children()) == 2
+    finally:
+        app.root.destroy()
+
+
+def test_gui_shows_bilingual_shell_sections_in_order() -> None:
+    app = _create_gui()
+    try:
+        app.root.update_idletasks()
+        label_texts = _visible_widget_texts(app.root, ttk.Label)
+        ordered_labels = [
+            "书匠",
+            "Booksmith",
+            "工作区",
+            "Workspace",
+            "输出与选项",
+            "Output & options",
+            "运行状态",
+            "Run status",
+            "结果",
+            "Results",
+            "日志",
+            "Logs",
+        ]
+
+        indices = [label_texts.index(label) for label in ordered_labels]
+        assert indices == sorted(indices)
+    finally:
+        app.root.destroy()
+
+
+def test_gui_defaults_to_collapsed_publishing_advanced_area() -> None:
+    app = _create_gui()
+    try:
+        app.mode_var.set("publishing")
+        app.sync_mode_panels()
+        app.root.update_idletasks()
+
+        assert app.views.publishing_expanded_var.get() is False
+        assert app.views.publishing_frame.winfo_manager() == "grid"
+        assert app.views.publishing_toggle_button.winfo_manager() == "grid"
+        assert app.views.publishing_toggle_button.instate(["disabled"])
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
     finally:
         app.root.destroy()
 
@@ -124,12 +165,9 @@ def test_gui_publishing_panel_visibility_tracks_mode() -> None:
         app.sync_mode_panels()
         app.root.update_idletasks()
         assert app.publishing_frame.winfo_manager() == "grid"
-        assert app.views.publishing_toggle_button.winfo_manager() == ""
+        assert app.views.publishing_toggle_button.winfo_manager() == "grid"
         assert app.views.publishing_advanced_frame.winfo_manager() == ""
-        assert set(_visible_widget_texts(app.publishing_frame, ttk.Checkbutton)) == {
-            "Also export PDF",
-            "Also export EPUB",
-        }
+        assert _visible_widget_texts(app.publishing_frame, ttk.Checkbutton) == []
 
         app.mode_var.set("engineering")
         app.sync_mode_panels()
