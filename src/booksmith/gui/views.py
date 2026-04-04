@@ -132,11 +132,11 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
     publishing_frame.grid(row=3, column=0, sticky="ew", pady=(18, 0))
     publishing_frame.columnconfigure(0, weight=1)
 
-    publishing_card = ttk.LabelFrame(publishing_frame, text="Publishing options")
-    publishing_card.grid(row=0, column=0, sticky="ew")
-    publishing_card.columnconfigure(0, weight=1)
+    publishing_panel = ttk.LabelFrame(publishing_frame, text="Publishing options")
+    publishing_panel.grid(row=0, column=0, sticky="ew")
+    publishing_panel.columnconfigure(0, weight=1)
 
-    publishing_body = ttk.Frame(publishing_card, padding=12)
+    publishing_body = ttk.Frame(publishing_panel, padding=12)
     publishing_body.grid(row=0, column=0, sticky="ew")
     publishing_body.columnconfigure(1, weight=1)
 
@@ -146,29 +146,22 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
         columnspan=2,
         sticky="w",
     )
-    publishing_toggle_button = ttk.Button(publishing_body, text="Advanced")
-    publishing_toggle_button.grid(row=1, column=0, sticky="w", pady=(10, 0))
-
-    publishing_advanced_frame = ttk.Frame(publishing_body)
-    publishing_advanced_frame.grid(
-        row=2,
-        column=0,
-        columnspan=2,
-        sticky="ew",
-        pady=(10, 0),
-    )
-
-    ttk.Checkbutton(publishing_advanced_frame, text="Also export PDF", variable=also_pdf_var).grid(
-        row=0,
+    ttk.Checkbutton(publishing_body, text="Also export PDF", variable=also_pdf_var).grid(
+        row=1,
         column=0,
         sticky="w",
+        pady=(10, 0),
     )
-    ttk.Checkbutton(publishing_advanced_frame, text="Also export EPUB", variable=also_epub_var).grid(
-        row=0,
+    ttk.Checkbutton(publishing_body, text="Also export EPUB", variable=also_epub_var).grid(
+        row=1,
         column=1,
         sticky="w",
         padx=(16, 0),
+        pady=(10, 0),
     )
+
+    publishing_advanced_frame = ttk.Frame(publishing_frame)
+    publishing_toggle_button = ttk.Button(publishing_frame, text="Advanced")
 
     run_card = ttk.LabelFrame(outer, text="Run")
     run_card.grid(row=4, column=0, sticky="ew", pady=(18, 0))
