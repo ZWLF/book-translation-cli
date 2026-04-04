@@ -1,6 +1,11 @@
 # Booksmith Design Notes
 
-This repository implements two translation workflows on one shared foundation:
+This repository implements a shared translation foundation with two user-facing entry points:
+
+- `CLI`: scriptable command-line execution for automation and power users
+- `GUI`: local desktop shell for guided runs, progress tracking, and artifact access
+
+Both entry points drive the same translation workflows:
 
 - `engineering`: accurate, resumable, chunk-based translation for bulk processing
 - `publishing`: quality-first non-fiction translation with explicit editorial stages
@@ -21,6 +26,7 @@ This repository implements two translation workflows on one shared foundation:
   - `error_log.json`
   - `run_summary.json`
   - `translated.txt`
+- Parallel CLI and GUI entry points that target the same pipelines and output semantics
 
 ## Publishing Workflow Guarantees
 
@@ -66,5 +72,4 @@ This repository implements two translation workflows on one shared foundation:
 
 - OCR for scanned PDFs
 - Publication-grade literary rewriting
-- GUI
 - Database-backed job management
