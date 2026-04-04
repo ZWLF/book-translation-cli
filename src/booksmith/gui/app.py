@@ -28,6 +28,7 @@ class BooksmithGui:
         self.mode_var = tk.StringVar(master=self.root, value="engineering")
         self.views: GuiShellViews = build_shell(self.root, mode_var=self.mode_var)
         self.publishing_frame = self.views.publishing_frame
+        self.publishing_advanced_frame = self.views.publishing_advanced_frame
         self.status_var = self.views.status_var
         self.stage_var = self.views.stage_var
         self.summary_var = self.views.summary_var
@@ -55,6 +56,7 @@ class BooksmithGui:
 
         self.mode_var.trace_add("write", self._on_mode_changed)
         self.views.run_button.configure(command=self._start_run)
+        self.views.publishing_toggle_button.configure(command=self._toggle_publishing_advanced)
         self.sync_mode_panels()
         self._sync_state_widgets()
         self._refresh_result_actions()
@@ -67,10 +69,24 @@ class BooksmithGui:
             self.publishing_frame.grid()
         else:
             self.publishing_frame.grid_remove()
+        self._sync_publishing_advanced_visibility()
         self.root.update_idletasks()
 
     def _on_mode_changed(self, *_args: object) -> None:
         self.sync_mode_panels()
+
+    def _toggle_publishing_advanced(self) -> None:
+        expanded = not self.views.publishing_expanded_var.get()
+        self.views.publishing_expanded_var.set(expanded)
+        self._sync_publishing_advanced_visibility()
+        self.root.update_idletasks()
+
+    def _sync_publishing_advanced_visibility(self) -> None:
+        if self.mode_var.get() != "publishing" or not self.views.publishing_expanded_var.get():
+            self.publishing_advanced_frame.grid_remove()
+            return
+
+        self.publishing_advanced_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
     def _collect_form_state(self) -> GuiFormState:
         return GuiFormState(

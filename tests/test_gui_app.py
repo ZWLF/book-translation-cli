@@ -147,12 +147,8 @@ def test_gui_defaults_to_collapsed_publishing_advanced_area() -> None:
         assert app.views.publishing_expanded_var.get() is False
         assert app.views.publishing_frame.winfo_manager() == "grid"
         assert app.views.publishing_toggle_button.winfo_manager() == "grid"
-        assert app.views.publishing_toggle_button.instate(["disabled"])
         assert app.views.publishing_advanced_frame.winfo_manager() == ""
-        assert set(_visible_widget_texts(app.publishing_frame, ttk.Checkbutton)) == {
-            "Also export PDF",
-            "Also export EPUB",
-        }
+        assert set(_visible_widget_texts(app.publishing_frame, ttk.Checkbutton)) == set()
     finally:
         app.root.destroy()
 
@@ -178,7 +174,34 @@ def test_gui_publishing_panel_visibility_tracks_mode() -> None:
         assert app.publishing_frame.winfo_manager() == "grid"
         assert app.views.publishing_toggle_button.winfo_manager() == "grid"
         assert app.views.publishing_advanced_frame.winfo_manager() == ""
-        assert set(_visible_widget_texts(app.publishing_frame, ttk.Checkbutton)) == {
+        assert set(_visible_widget_texts(app.publishing_frame, ttk.Checkbutton)) == set()
+
+        app.mode_var.set("engineering")
+        app.sync_mode_panels()
+        app.root.update()
+        assert app.publishing_frame.winfo_manager() == ""
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+    finally:
+        app.root.destroy()
+
+
+def test_gui_expands_publishing_advanced_options_on_toggle() -> None:
+    app = _create_gui()
+    try:
+        app.mode_var.set("publishing")
+        app.sync_mode_panels()
+        app.root.update()
+
+        assert not app.views.publishing_toggle_button.instate(["disabled"])
+        assert app.views.publishing_expanded_var.get() is False
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+
+        app._toggle_publishing_advanced()
+        app.root.update()
+
+        assert app.views.publishing_expanded_var.get() is True
+        assert app.views.publishing_advanced_frame.winfo_manager() == "grid"
+        assert set(_visible_widget_texts(app.views.publishing_advanced_frame, ttk.Checkbutton)) == {
             "Also export PDF",
             "Also export EPUB",
         }
@@ -186,7 +209,9 @@ def test_gui_publishing_panel_visibility_tracks_mode() -> None:
         app.mode_var.set("engineering")
         app.sync_mode_panels()
         app.root.update()
+
         assert app.publishing_frame.winfo_manager() == ""
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
     finally:
         app.root.destroy()
 

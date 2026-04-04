@@ -207,29 +207,22 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
     publishing_toggle_button = ttk.Button(
         publishing_body,
         text="高级选项 / Advanced",
-        state="disabled",
     )
     publishing_toggle_button.grid(row=1, column=0, sticky="w", pady=(10, 0))
-    ttk.Label(
-        publishing_body,
-        text="Available in the next step.",
-    ).grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
-
-    ttk.Checkbutton(publishing_body, text="Also export PDF", variable=also_pdf_var).grid(
-        row=2,
-        column=0,
-        sticky="w",
-        pady=(10, 0),
-    )
-    ttk.Checkbutton(publishing_body, text="Also export EPUB", variable=also_epub_var).grid(
-        row=2,
-        column=1,
-        sticky="w",
-        padx=(16, 0),
-        pady=(10, 0),
-    )
-
     publishing_advanced_frame = ttk.Frame(publishing_frame)
+    publishing_advanced_frame.columnconfigure(0, weight=1)
+    publishing_advanced_frame.columnconfigure(1, weight=1)
+
+    ttk.Checkbutton(
+        publishing_advanced_frame,
+        text="Also export PDF",
+        variable=also_pdf_var,
+    ).grid(row=0, column=0, sticky="w")
+    ttk.Checkbutton(
+        publishing_advanced_frame,
+        text="Also export EPUB",
+        variable=also_epub_var,
+    ).grid(row=0, column=1, sticky="w", padx=(16, 0))
 
     _add_section_heading(
         outer,
