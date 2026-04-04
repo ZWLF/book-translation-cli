@@ -6,6 +6,7 @@ from ebooklib import epub
 from reportlab.pdfgen import canvas
 from typer.testing import CliRunner
 
+import book_translator.publishing.pipeline as publishing_pipeline
 from book_translator.cli import app
 from book_translator.config import (
     PublishingOutputSelection,
@@ -484,9 +485,7 @@ class DeepReviewProvider(FakeProvider):
         if "First principle." in request.source_text:
             return self.make_result(
                 chunk_id=request.chunk_id,
-                translated_text=(
-                    "译文::核心方法 1. 第一条原则。 2. 第二条原则。 3. 第三条原则。"
-                ),
+                translated_text=("译文::核心方法 1. 第一条原则。 2. 第二条原则。 3. 第三条原则。"),
                 input_tokens=10,
                 output_tokens=12,
                 estimated_cost_usd=0.001,
@@ -547,14 +546,12 @@ async def test_process_book_publishing_runs_deep_review_and_rebuilds_final_text(
     )
 
     book_dir = tmp_path / "out" / "deep-review" / "publishing"
-    final_text = (book_dir / "candidate" / "final" / "translated.txt").read_text(
-        encoding="utf-8"
-    )
+    final_text = (book_dir / "candidate" / "final" / "translated.txt").read_text(encoding="utf-8")
     deep_review_rows = [
         json.loads(line)
-        for line in (book_dir / "deep_review" / "revised_chapters.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (book_dir / "deep_review" / "revised_chapters.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
 
@@ -575,6 +572,107 @@ async def test_process_book_publishing_runs_deep_review_and_rebuilds_final_text(
     assert "First principle." not in final_text
     assert deep_review_rows
     assert "blocks" in deep_review_rows[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dependency_module", "dependency_filename", "initial_content", "updated_content"),
+    [
+        (publishing_pipeline.source_audit, "source_audit.py", "source-audit-v1", "source-audit-v2"),
+        (
+            publishing_pipeline.structure_module,
+            "structure.py",
+            "structure-v1",
+            "structure-v2",
+        ),
+        (
+            publishing_pipeline.output_validation,
+            "validation.py",
+            "output-validation-v1",
+            "output-validation-v2",
+        ),
+    ],
+)
+async def test_process_book_publishing_reruns_deep_review_when_dependency_source_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dependency_module,
+    dependency_filename: str,
+    initial_content: str,
+    updated_content: str,
+) -> None:
+    input_path = tmp_path / "deep-review.epub"
+    _build_numbered_list_epub(input_path)
+
+    dependency_path = tmp_path / dependency_filename
+    dependency_path.write_text(initial_content, encoding="utf-8")
+    monkeypatch.setattr(dependency_module, "__file__", str(dependency_path))
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            to_stage="deep-review",
+            render_pdf=False,
+        ),
+        provider=DeepReviewProvider(),
+    )
+
+    from book_translator.state.workspace import Workspace
+
+    workspace = Workspace(tmp_path / "out" / "deep-review")
+    initial_state = workspace.read_publishing_stage_state("deep-review")
+    assert initial_state is not None
+    initial_fingerprint = initial_state.fingerprint
+
+    source_audit_path = workspace.publishing_audit_source_path
+    gate_report_path = workspace.publishing_final_gate_report_path
+    source_audit_path.write_text("tampered source audit\n", encoding="utf-8")
+    gate_report_path.write_text(
+        json.dumps({"tampered": True}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    original_run_deep_review = publishing_pipeline.run_deep_review
+    call_count = 0
+
+    def wrapped_run_deep_review(*, source_chapters, final_artifacts, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original_run_deep_review(
+            source_chapters=source_chapters,
+            final_artifacts=final_artifacts,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.run_deep_review",
+        wrapped_run_deep_review,
+    )
+    dependency_path.write_text(updated_content, encoding="utf-8")
+
+    summary = await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            from_stage="deep-review",
+            to_stage="deep-review",
+            render_pdf=False,
+        ),
+        provider=FailIfCalledProvider(),
+    )
+
+    updated_state = workspace.read_publishing_stage_state("deep-review")
+    assert summary["completed_stage"] == "deep-review"
+    assert call_count == 1
+    assert updated_state is not None
+    assert updated_state.fingerprint != initial_fingerprint
+    assert "tampered source audit" not in source_audit_path.read_text(encoding="utf-8")
+    assert json.loads(gate_report_path.read_text(encoding="utf-8")).get("tampered") is not True
 
 
 @pytest.mark.asyncio
@@ -965,7 +1063,10 @@ async def test_promote_candidate_release_copies_candidate_final_outputs(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_failed_gate_keeps_existing_final_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_failed_gate_keeps_existing_final_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     input_path = tmp_path / "sample.epub"
     _build_sample_epub(input_path)
 
@@ -1003,7 +1104,10 @@ async def test_failed_gate_keeps_existing_final_release(tmp_path: Path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_passing_gate_promotes_candidate_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_passing_gate_promotes_candidate_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     input_path = tmp_path / "sample.epub"
     _build_sample_epub(input_path)
 

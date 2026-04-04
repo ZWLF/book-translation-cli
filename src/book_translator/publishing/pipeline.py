@@ -18,11 +18,14 @@ from book_translator.config import (
 from book_translator.models import (
     Chapter,
     Manifest,
-    PublishingGateInputs,
     PublishingChapterArtifact,
+    PublishingGateInputs,
     StructuredPublishingBook,
     StructuredPublishingChapter,
 )
+from book_translator.output import assembler as output_assembler
+from book_translator.output import epub_renderer
+from book_translator.output import polished_pdf as polished_pdf_module
 from book_translator.output.assembler import (
     assemble_publishing_output_text,
     assemble_structured_chapter_text,
@@ -37,6 +40,10 @@ from book_translator.output.polished_pdf import (
 from book_translator.output.title_enrichment import enrich_missing_titles
 from book_translator.pipeline import _build_provider, _extract_book, _load_mapping
 from book_translator.providers.base import BaseProvider
+from book_translator.publishing import deep_review as deep_review_module
+from book_translator.publishing import editorial_revision, layout_review, source_audit
+from book_translator.publishing import structure as structure_module
+from book_translator.publishing import validation as output_validation
 from book_translator.publishing.deep_review import (
     DEEP_REVIEW_STAGE_VERSION,
     run_deep_review,
@@ -161,16 +168,14 @@ async def process_book_publishing(
             deep_review_findings,
             deep_review_decisions,
             deep_review_revised_count,
-        ) = (
-            await _ensure_deep_review_stage(
-                workspace=workspace,
-                manifest=manifest,
-                source_chapters=chapters,
-                final_artifacts=final_artifacts,
-                config=config,
-                provider=provider,
-                summary_metrics=metrics,
-            )
+        ) = await _ensure_deep_review_stage(
+            workspace=workspace,
+            manifest=manifest,
+            source_chapters=chapters,
+            final_artifacts=final_artifacts,
+            config=config,
+            provider=provider,
+            summary_metrics=metrics,
         )
 
         completed_stage = config.to_stage
@@ -552,8 +557,7 @@ async def _ensure_final_review_stage(
         workspace.publishing_editorial_log_path,
     ]
     if config.render_pdf and (
-        output_selection.primary_output == "pdf"
-        or "pdf" in output_selection.additional_outputs
+        output_selection.primary_output == "pdf" or "pdf" in output_selection.additional_outputs
     ):
         required_paths.append(workspace.publishing_candidate_final_pdf_path)
     if output_selection.primary_output == "epub" or "epub" in output_selection.additional_outputs:
@@ -650,8 +654,7 @@ async def _ensure_deep_review_stage(
         workspace.publishing_candidate_final_text_path,
     ]
     if config.render_pdf and (
-        output_selection.primary_output == "pdf"
-        or "pdf" in output_selection.additional_outputs
+        output_selection.primary_output == "pdf" or "pdf" in output_selection.additional_outputs
     ):
         required_paths.append(workspace.publishing_candidate_final_pdf_path)
     if output_selection.primary_output == "epub" or "epub" in output_selection.additional_outputs:
@@ -941,6 +944,29 @@ def _deep_review_stage_fingerprint(
             "audit_depth": config.audit_depth,
             "enable_cross_review": config.enable_cross_review,
             "deep_review_stage_version": DEEP_REVIEW_STAGE_VERSION,
+            "deep_review_source_fingerprint": _module_source_fingerprint(
+                deep_review_module
+            ),
+            "source_audit_source_fingerprint": _module_source_fingerprint(source_audit),
+            "structure_source_fingerprint": _module_source_fingerprint(structure_module),
+            "editorial_revision_source_fingerprint": _module_source_fingerprint(
+                editorial_revision
+            ),
+            "layout_review_source_fingerprint": _module_source_fingerprint(
+                layout_review
+            ),
+            "output_assembler_source_fingerprint": _module_source_fingerprint(
+                output_assembler
+            ),
+            "output_validation_source_fingerprint": _module_source_fingerprint(
+                output_validation
+            ),
+            "polished_pdf_source_fingerprint": _module_source_fingerprint(
+                polished_pdf_module
+            ),
+            "epub_renderer_source_fingerprint": _module_source_fingerprint(
+                epub_renderer
+            ),
             "pdf_annotation_renderer_version": PDF_ANNOTATION_RENDERER_VERSION,
             "epub_renderer_version": EPUB_RENDERER_VERSION,
             "title_translations_fingerprint": _title_translations_fingerprint(workspace),
@@ -949,12 +975,17 @@ def _deep_review_stage_fingerprint(
     )
 
 
+def _module_source_fingerprint(module: Any) -> str:
+    module_path = getattr(module, "__file__", None)
+    if not module_path:
+        return "missing"
+    return file_fingerprint(Path(module_path))
+
+
 def _deep_review_decisions_fingerprint(workspace: Workspace) -> str:
     if not workspace.publishing_deep_review_decisions_path.exists():
         return "missing"
-    return _fingerprint_payload(
-        _load_json_object(workspace.publishing_deep_review_decisions_path)
-    )
+    return _fingerprint_payload(_load_json_object(workspace.publishing_deep_review_decisions_path))
 
 
 def _final_chapters_fingerprint(workspace: Workspace) -> str:
@@ -986,10 +1017,7 @@ async def _rebuild_stable_publishing_outputs(
     selection = _output_selection(input_path=Path(manifest.source_path), config=config)
     should_render_pdf = bool(
         config.render_pdf
-        and (
-            selection.primary_output == "pdf"
-            or "pdf" in selection.additional_outputs
-        )
+        and (selection.primary_output == "pdf" or "pdf" in selection.additional_outputs)
     )
     should_render_epub = bool(
         selection.primary_output == "epub" or "epub" in selection.additional_outputs

@@ -10,6 +10,7 @@ _STRUCTURED_LINE_RE = re.compile(
     r"^\s*(?:\d{1,3}[.)]|[-*]|\u2022|(?:q|question|a|answer|\u95ee|\u7b54)\s*[:\uff1a])\s+\S",
     re.IGNORECASE,
 )
+_REFERENCE_LINE_RE = re.compile(r"^\s*\d{2,4}\s+\S")
 
 
 def audit_source_against_target(
@@ -116,8 +117,10 @@ def _detect_possible_omissions(
     if _looks_like_collapsed_numbered_list(source_text=source_text, target_text=target_text):
         return []
 
-    source_units = _extract_structural_units(source_text, source_title=source_title)
-    target_units = _extract_structural_units(target_text)
+    source_units = _trim_non_body_tail_units(
+        _extract_structural_units(source_text, source_title=source_title)
+    )
+    target_units = _trim_non_body_tail_units(_extract_structural_units(target_text))
 
     source_sentence_count = _sentence_count(source_text)
     target_sentence_count = _sentence_count(target_text)
@@ -145,6 +148,8 @@ def _detect_possible_omissions(
         return []
 
     missing_units = source_units[-missing_count:]
+    if _missing_units_already_present_in_target(missing_units, target_text):
+        return []
     return [
         _build_audit_finding(
             chapter_id=chapter_id,
@@ -351,13 +356,32 @@ def _should_relax_cross_language_omission(
 ) -> bool:
     if len(source_units) < 3 or len(target_units) < 2:
         return False
-    if not _looks_like_cross_language_prose_pair(source_text, target_text):
-        return False
+    shared_numeric_anchors = _shared_numeric_anchor_count(source_text, target_text)
+    if _looks_like_cross_language_prose_pair(source_text, target_text):
+        if len(target_units) * 2 >= len(source_units):
+            return True
 
-    if len(target_units) * 2 >= len(source_units):
-        return True
+        if source_sentence_count >= 3 and target_sentence_count >= 2 and len(source_units) <= 6:
+            return True
 
-    if source_sentence_count >= 3 and target_sentence_count >= 2 and len(source_units) <= 6:
+        if (
+            shared_numeric_anchors >= 3
+            and target_sentence_count >= max(4, int(source_sentence_count * 0.08))
+        ):
+            return True
+
+        if (
+            source_sentence_count >= 8
+            and len(target_units) >= 8
+            and target_sentence_count >= max(12, int(source_sentence_count * 0.2))
+        ):
+            return True
+
+    if (
+        shared_numeric_anchors >= 6
+        and target_sentence_count >= max(12, int(source_sentence_count * 0.6))
+        and len(target_units) >= max(8, int(len(source_units) * 0.75))
+    ):
         return True
 
     return False
@@ -415,6 +439,37 @@ def _extract_structural_units(text: str, source_title: str | None = None) -> lis
     return _strip_leading_title_unit(units, source_title)
 
 
+def _trim_non_body_tail_units(units: list[str]) -> list[str]:
+    trimmed = list(units)
+    while trimmed and (
+        _looks_like_reference_tail_unit(trimmed[-1]) or _looks_like_boundary_heading(trimmed[-1])
+    ):
+        trimmed.pop()
+    return trimmed
+
+
+def _looks_like_reference_tail_unit(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not re.match(r"^\d{2,4}\s+\S", compact):
+        return False
+    if re.search(r"https?://|www\.", compact, re.I):
+        return True
+    if re.search(r'["“”]', compact):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:podcast|summit|conference|speech|interview|blog|transcript|episode|plan)\b",
+            compact,
+            re.I,
+        )
+    )
+
+
+def _looks_like_boundary_heading(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    return bool(re.match(r"^(?:part|chapter)\s+[ivxlcdm0-9]+$", compact, re.I))
+
+
 def _strip_leading_title_unit(units: list[str], source_title: str | None) -> list[str]:
     if not source_title or not units:
         return units
@@ -433,7 +488,26 @@ def _looks_like_structured_line_block(text: str) -> bool:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if len(lines) < 3:
         return False
-    return all(_STRUCTURED_LINE_RE.match(line) for line in lines)
+    if all(_STRUCTURED_LINE_RE.match(line) for line in lines):
+        return True
+    return all(_looks_like_reference_line(line) for line in lines)
+
+
+def _looks_like_reference_line(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not _REFERENCE_LINE_RE.match(compact):
+        return False
+    if re.search(r"https?://|www\.", compact, re.I):
+        return True
+    if re.search(r'["“”]', compact):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:podcast|summit|conference|speech|interview|blog|transcript|episode|plan)\b",
+            compact,
+            re.I,
+        )
+    )
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -468,6 +542,28 @@ def _count_qa_markers(text: str, *, marker_kind: str) -> int:
     else:
         pattern = r"(?mi)^\s*(?:a|answer|\u7b54)\s*[:\uff1a]"
     return len(re.findall(pattern, text))
+
+
+def _shared_numeric_anchor_count(source_text: str, target_text: str) -> int:
+    source_markers = set(re.findall(r"(?<!\d)(\d{2,4})(?!\d)", source_text))
+    target_markers = set(re.findall(r"(?<!\d)(\d{2,4})(?!\d)", target_text))
+    return len(source_markers & target_markers)
+
+
+def _missing_units_already_present_in_target(missing_units: list[str], target_text: str) -> bool:
+    normalized_target = _normalize_unit(target_text)
+    checked_units = 0
+    matched_units = 0
+    for unit in missing_units:
+        fragment = _normalize_unit(unit)
+        if len(fragment) < 6:
+            continue
+        checked_units += 1
+        if fragment in normalized_target:
+            matched_units += 1
+    if checked_units == 0:
+        return False
+    return matched_units / checked_units >= 0.8
 
 
 def _excerpt(text: str, *, max_len: int = 180) -> str:

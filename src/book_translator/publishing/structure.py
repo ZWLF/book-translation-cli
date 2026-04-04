@@ -12,6 +12,7 @@ from book_translator.models import (
 
 _NUMBERED_ITEM_RE = re.compile(r"^\s*(\d{1,3})[.)]\s*(.+?)\s*$")
 _INLINE_NUMBERED_MARKER_RE = re.compile(r"(?<!\d)(\d{1,3})[.)]\s*")
+_TAIL_REFERENCE_MARKER_RE = re.compile(r"(?<!\d)(\d{2,4})\s+(?=\S)")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
@@ -66,11 +67,12 @@ def _build_blocks_from_text(
         numbered_items = _extract_numbered_items(paragraph)
         if numbered_items:
             for _, item_text in numbered_items:
+                primary_text, overflow_blocks = _split_numbered_item_overflow(item_text)
                 blocks.append(
                     PublishingBlock(
                         block_id=_block_id(chapter_id=chapter_id, order_index=block_index),
                         kind="ordered_item",
-                        text=item_text,
+                        text=primary_text,
                         order_index=block_index,
                         source_anchor=(
                             numbered_source_anchors[numbered_anchor_index]
@@ -81,6 +83,16 @@ def _build_blocks_from_text(
                 )
                 block_index += 1
                 numbered_anchor_index += 1
+                for overflow_kind, overflow_text in overflow_blocks:
+                    blocks.append(
+                        PublishingBlock(
+                            block_id=_block_id(chapter_id=chapter_id, order_index=block_index),
+                            kind=overflow_kind,
+                            text=overflow_text,
+                            order_index=block_index,
+                        )
+                    )
+                    block_index += 1
             continue
 
         blocks.append(
@@ -141,6 +153,65 @@ def _extract_inline_numbered_items(paragraph: str) -> list[tuple[str, str]]:
             continue
         items.append((match.group(1), item_text))
     return items if len(items) >= 3 else []
+
+
+def _split_numbered_item_overflow(item_text: str) -> tuple[str, list[tuple[str, str]]]:
+    compact = re.sub(r"\s+", " ", item_text).strip()
+    if not compact:
+        return "", []
+
+    matches = list(_TAIL_REFERENCE_MARKER_RE.finditer(compact))
+    run_start = _find_tail_marker_run_start(compact, matches)
+    if run_start is None:
+        return compact, []
+
+    first_marker = matches[run_start]
+    primary_text = compact[: first_marker.start()].rstrip()
+    if not primary_text:
+        return compact, []
+
+    overflow_blocks: list[tuple[str, str]] = []
+    for index in range(run_start, len(matches)):
+        start = matches[index].start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(compact)
+        segment = compact[start:end].strip()
+        if not segment:
+            continue
+        kind = "reference_entry" if _looks_like_reference_entry(segment) else "paragraph"
+        overflow_blocks.append((kind, segment))
+    return primary_text, overflow_blocks
+
+
+def _find_tail_marker_run_start(text: str, matches: list[re.Match[str]]) -> int | None:
+    if len(matches) < 2:
+        return None
+
+    values = [int(match.group(1)) for match in matches]
+    for index in range(len(values) - 1):
+        if values[index + 1] != values[index] + 1:
+            continue
+        prefix = text[: matches[index].start()].rstrip()
+        if not prefix or prefix[-1] not in ".!?)]}\"'。！？）":
+            continue
+        return index
+    return None
+
+
+def _looks_like_reference_entry(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not re.match(r"^\d{2,4}\s+\S", compact):
+        return False
+    if re.search(r"https?://|www\.", compact, re.I):
+        return True
+    if re.search(r'["“”]', compact):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:podcast|summit|conference|speech|interview|blog|transcript|episode|plan)\b",
+            compact,
+            re.I,
+        )
+    )
 
 
 def _extract_numbered_source_anchors(source_text: str) -> list[str]:
