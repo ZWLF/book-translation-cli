@@ -1,0 +1,1570 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any
+from xml.sax.saxutils import escape as xml_escape
+
+from booksmith.models import (
+    Chunk,
+    Manifest,
+    PublishingAsset,
+    PublishingBlock,
+    PublishingChapterArtifact,
+    PublishingLayoutAnnotation,
+    StructuredPublishingBook,
+    StructuredPublishingChapter,
+    TranslationResult,
+)
+
+
+@dataclass(slots=True)
+class PrintableBlock:
+    kind: str
+    text: str
+
+
+@dataclass(slots=True)
+class PrintableChapter:
+    chapter_id: str
+    chapter_index: int
+    source_title: str
+    title_kind: str
+    title_en: str
+    title_zh: str | None
+    header_title: str
+    toc_label_html: str
+    blocks: list[PrintableBlock] = field(default_factory=list)
+
+    @property
+    def display_title(self) -> str:
+        return self.title_zh or self.title_en or self.source_title
+
+
+@dataclass(slots=True)
+class PrintableBook:
+    book_id: str
+    title_en: str
+    title_zh: str | None
+    author: str | None
+    source_path: str
+    provider: str
+    model: str
+    estimated_cost_usd: float | None
+    chapters: list[PrintableChapter] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class EditionFrontMatter:
+    cover_badge: str
+    note_heading: str
+    note_origin: str
+    note_body: str
+    metadata_lines: list[str]
+
+
+def build_printable_book(
+    *,
+    manifest: Manifest,
+    summary: dict[str, Any],
+    chunks: list[Chunk],
+    translations: dict[str, TranslationResult],
+    title_overrides: dict[str, str] | None = None,
+) -> PrintableBook:
+    title_en, author = _parse_title_and_author(_source_stem(manifest.source_path))
+    title_overrides = title_overrides or {}
+    grouped: dict[str, dict[str, Any]] = {}
+
+    for chunk in sorted(chunks, key=lambda item: (item.chapter_index, item.chunk_index)):
+        translated = translations.get(chunk.chunk_id)
+        if translated is None or not translated.translated_text.strip():
+            continue
+        entry = grouped.setdefault(
+            chunk.chapter_id,
+            {
+                "chapter_id": chunk.chapter_id,
+                "chapter_index": chunk.chapter_index,
+                "source_title": chunk.chapter_title,
+                "texts": [],
+            },
+        )
+        entry["texts"].append(translated.translated_text)
+
+    return _build_printable_book_from_entries(
+        manifest=manifest,
+        summary=summary,
+        grouped_entries=grouped,
+        title_en=title_en,
+        author=author,
+        title_overrides=title_overrides,
+    )
+
+
+def build_printable_book_from_artifacts(
+    *,
+    manifest: Manifest,
+    summary: dict[str, Any],
+    chapters: list[PublishingChapterArtifact],
+    title_overrides: dict[str, str] | None = None,
+    deep_review_decisions: dict[str, Any] | None = None,
+) -> PrintableBook:
+    title_en, author = _parse_title_and_author(_source_stem(manifest.source_path))
+    annotations_by_chapter = _annotations_by_chapter(deep_review_decisions)
+    grouped = {
+        chapter.chapter_id: {
+            "chapter_id": chapter.chapter_id,
+            "chapter_index": chapter.chapter_index,
+            "source_title": chapter.title,
+            "texts": [chapter.text],
+            "annotations": annotations_by_chapter.get(chapter.chapter_id, []),
+        }
+        for chapter in chapters
+    }
+    return _build_printable_book_from_entries(
+        manifest=manifest,
+        summary=summary,
+        grouped_entries=grouped,
+        title_en=title_en,
+        author=author,
+        title_overrides=title_overrides or {},
+    )
+
+
+def build_printable_book_from_structured_book(
+    *,
+    manifest: Manifest,
+    summary: dict[str, Any],
+    book: StructuredPublishingBook,
+    title_overrides: dict[str, str] | None = None,
+) -> PrintableBook:
+    title_en, author = _parse_title_and_author(_source_stem(manifest.source_path))
+    chapters: list[PrintableChapter] = []
+    title_overrides = title_overrides or {}
+
+    for structured_chapter in sorted(book.chapters, key=lambda item: item.chapter_index):
+        printable_blocks = _printable_blocks_from_structured_chapter(structured_chapter)
+        if not printable_blocks:
+            continue
+
+        source_title = (
+            structured_chapter.source_title
+            or structured_chapter.translated_title
+            or ""
+        ).strip()
+        resolved_title_zh = _preferred_chapter_title_zh(
+            source_title,
+            title_overrides.get(structured_chapter.chapter_id)
+            or structured_chapter.translated_title
+            or None,
+        )
+
+        chapters.append(
+            PrintableChapter(
+                chapter_id=structured_chapter.chapter_id,
+                chapter_index=structured_chapter.chapter_index,
+                source_title=source_title,
+                title_kind=_classify_title_kind(source_title, resolved_title_zh),
+                title_en=source_title,
+                title_zh=resolved_title_zh,
+                header_title=_build_header_title(source_title, resolved_title_zh),
+                toc_label_html=_build_toc_label_html(source_title, resolved_title_zh),
+                blocks=printable_blocks,
+            )
+        )
+
+    return PrintableBook(
+        book_id=manifest.book_id,
+        title_en=title_en,
+        title_zh=book.title.strip() or None,
+        author=author,
+        source_path=manifest.source_path,
+        provider=manifest.provider,
+        model=manifest.model,
+        estimated_cost_usd=_as_float(summary.get("estimated_cost_usd")),
+        chapters=chapters,
+    )
+
+
+def render_polished_pdf_from_structured_book(
+    book: StructuredPublishingBook,
+    output_path: Path,
+    *,
+    manifest: Manifest,
+    summary: dict[str, Any],
+    title_overrides: dict[str, str] | None = None,
+    edition_label: str = "engineering",
+) -> None:
+    printable_book = build_printable_book_from_structured_book(
+        manifest=manifest,
+        summary=summary,
+        book=book,
+        title_overrides=title_overrides,
+    )
+    render_polished_pdf(
+        printable_book,
+        output_path,
+        edition_label=edition_label,
+    )
+
+
+def _printable_blocks_from_structured_chapter(
+    chapter: StructuredPublishingChapter,
+) -> list[PrintableBlock]:
+    caption_block_ids = {
+        block.block_id for block in chapter.blocks if block.kind == "caption"
+    }
+    surfaced_caption_anchor_ids: set[str] = set()
+    caption_text_keys = {
+        _normalize_key(block.text)
+        for block in chapter.blocks
+        if block.kind == "caption"
+    }
+    assets_by_anchor = {
+        asset.block_anchor_id: asset
+        for asset in chapter.assets
+        if asset.block_anchor_id
+    }
+
+    printable_blocks: list[PrintableBlock] = []
+    for block in sorted(chapter.blocks, key=lambda item: item.order_index):
+        printable_block = _convert_structured_block_to_printable(
+            block,
+            assets_by_anchor=assets_by_anchor,
+            caption_block_ids=caption_block_ids,
+            caption_text_keys=caption_text_keys,
+            surfaced_caption_anchor_ids=surfaced_caption_anchor_ids,
+        )
+        if printable_block is not None:
+            printable_blocks.append(printable_block)
+
+    for asset in chapter.assets:
+        if asset.status != "caption-only" or not asset.caption:
+            continue
+        if asset.block_anchor_id and asset.block_anchor_id in surfaced_caption_anchor_ids:
+            continue
+        if asset.block_anchor_id and asset.block_anchor_id in caption_block_ids:
+            continue
+        if _normalize_key(asset.caption) in caption_text_keys:
+            continue
+        printable_blocks.append(PrintableBlock(kind="caption", text=asset.caption.strip()))
+
+    return printable_blocks
+
+
+def _convert_structured_block_to_printable(
+    block: PublishingBlock,
+    *,
+    assets_by_anchor: dict[str, PublishingAsset],
+    caption_block_ids: set[str],
+    caption_text_keys: set[str],
+    surfaced_caption_anchor_ids: set[str],
+) -> PrintableBlock | None:
+    text = block.text.strip()
+    if block.kind == "ordered_item":
+        return PrintableBlock(kind="numbered_item", text=text)
+    if block.kind == "unordered_item":
+        return PrintableBlock(kind="paragraph", text=text)
+    if block.kind == "heading":
+        return PrintableBlock(kind="section_heading", text=text)
+    if block.kind == "reference_entry":
+        return PrintableBlock(kind="reference", text=text)
+    if block.kind in {
+        "paragraph",
+        "qa_question",
+        "qa_answer",
+        "callout",
+        "quote",
+        "caption",
+    }:
+        return PrintableBlock(kind=block.kind, text=text)
+    if block.kind == "image":
+        asset = assets_by_anchor.get(block.block_id)
+        if asset and asset.status == "caption-only" and asset.caption:
+            if block.block_id in caption_block_ids:
+                return None
+            if _normalize_key(asset.caption) in caption_text_keys:
+                return None
+            surfaced_caption_anchor_ids.add(block.block_id)
+            return PrintableBlock(kind="caption", text=asset.caption.strip())
+        if text:
+            return PrintableBlock(kind="paragraph", text=text)
+        return None
+    return PrintableBlock(kind="paragraph", text=text) if text else None
+
+
+def _build_printable_book_from_entries(
+    *,
+    manifest: Manifest,
+    summary: dict[str, Any],
+    grouped_entries: dict[str, dict[str, Any]],
+    title_en: str,
+    author: str | None,
+    title_overrides: dict[str, str],
+) -> PrintableBook:
+    title_zh: str | None = None
+    chapters: list[PrintableChapter] = []
+    for entry in sorted(grouped_entries.values(), key=lambda item: item["chapter_index"]):
+        combined_text = "\n\n".join(entry["texts"]).strip()
+        if not combined_text:
+            continue
+
+        raw_blocks = _split_raw_blocks(combined_text)
+        chapter_title_zh: str | None = None
+        title_block_checked = False
+        printable_blocks: list[PrintableBlock] = []
+
+        for raw_lines in raw_blocks:
+            for lines in _split_semantic_lines(raw_lines):
+                reference_entries = _extract_reference_entries(lines)
+                if reference_entries:
+                    title_block_checked = True
+                    printable_blocks.extend(
+                        PrintableBlock(kind="reference", text=entry) for entry in reference_entries
+                    )
+                    continue
+
+                content_lines, citation_numbers = _extract_trailing_citation_numbers(lines)
+                cleaned_lines = _clean_block_lines(
+                    content_lines,
+                    preserve_leading_number=bool(content_lines)
+                    and re.fullmatch(r"\d+", content_lines[0]) is not None,
+                )
+                if not cleaned_lines:
+                    continue
+
+                if title_zh is None and _is_book_title(cleaned_lines[0]):
+                    title_zh = cleaned_lines[0]
+                    cleaned_lines = cleaned_lines[1:]
+                    if not cleaned_lines:
+                        continue
+
+                if not title_block_checked:
+                    chapter_title_zh, cleaned_lines = _extract_chapter_title_zh(cleaned_lines)
+                    title_block_checked = True
+                    if not cleaned_lines:
+                        continue
+
+                block_text = _build_block_text(cleaned_lines, citation_numbers)
+
+                if _looks_like_callout(cleaned_lines, citation_numbers):
+                    printable_blocks.append(
+                        PrintableBlock(
+                            kind="callout",
+                            text=block_text,
+                        )
+                    )
+                    continue
+
+                if len(cleaned_lines) == 1 and _looks_like_section_heading(cleaned_lines[0]):
+                    printable_blocks.append(
+                        PrintableBlock(
+                            kind="section_heading",
+                            text=(
+                                block_text
+                                if citation_numbers
+                                else _tighten_mixed_text_spacing(cleaned_lines[0])
+                            ),
+                        )
+                    )
+                    continue
+
+                if len(cleaned_lines) == 1 and _looks_like_numbered_item(cleaned_lines[0]):
+                    printable_blocks.append(PrintableBlock(kind="numbered_item", text=block_text))
+                    continue
+
+                printable_blocks.append(PrintableBlock(kind="paragraph", text=block_text))
+
+        printable_blocks = _apply_deep_review_annotations(
+            chapter_text=combined_text,
+            blocks=printable_blocks,
+            annotations=entry.get("annotations", []),
+        )
+
+        if not printable_blocks:
+            continue
+
+        resolved_title_zh = _preferred_chapter_title_zh(
+            entry["source_title"],
+            title_overrides.get(entry["chapter_id"]) or chapter_title_zh,
+        )
+
+        chapters.append(
+            PrintableChapter(
+                chapter_id=entry["chapter_id"],
+                chapter_index=entry["chapter_index"],
+                source_title=entry["source_title"],
+                title_kind=_classify_title_kind(
+                    entry["source_title"],
+                    resolved_title_zh,
+                ),
+                title_en=entry["source_title"],
+                title_zh=resolved_title_zh,
+                header_title=_build_header_title(
+                    entry["source_title"],
+                    resolved_title_zh,
+                ),
+                toc_label_html=_build_toc_label_html(
+                    entry["source_title"],
+                    resolved_title_zh,
+                ),
+                blocks=printable_blocks,
+            )
+        )
+
+    return PrintableBook(
+        book_id=manifest.book_id,
+        title_en=title_en,
+        title_zh=title_zh,
+        author=author,
+        source_path=manifest.source_path,
+        provider=manifest.provider,
+        model=manifest.model,
+        estimated_cost_usd=_as_float(summary.get("estimated_cost_usd")),
+        chapters=chapters,
+    )
+
+
+def render_polished_pdf(
+    book: PrintableBook,
+    output_path: Path,
+    *,
+    edition_label: str = "engineering",
+) -> None:
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+        from reportlab.lib.pagesizes import A5
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.platypus import (
+            BaseDocTemplate,
+            Frame,
+            NextPageTemplate,
+            PageBreak,
+            PageTemplate,
+            Paragraph,
+            Spacer,
+            Table,
+            TableStyle,
+        )
+        from reportlab.platypus.tableofcontents import TableOfContents
+    except ImportError as exc:
+        raise RuntimeError(
+            "reportlab is required for polished PDF output. Install project dependencies first."
+        ) from exc
+
+    fonts = _register_book_fonts(pdfmetrics, TTFont, UnicodeCIDFont)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    styles = getSampleStyleSheet()
+    page_width, page_height = A5
+    margins = {
+        "left": 20 * mm,
+        "right": 20 * mm,
+        "top": 20 * mm,
+        "bottom": 18 * mm,
+    }
+
+    palette = {
+        "ink": colors.HexColor("#222222"),
+        "muted": colors.HexColor("#6B6259"),
+        "accent": colors.HexColor("#8C5A2B"),
+        "citation": colors.HexColor("#2F5BD2"),
+        "callout_bg": colors.HexColor("#ECE9E4"),
+        "line": colors.HexColor("#D8CCBF"),
+    }
+    text_block_width = page_width - margins["left"] - margins["right"]
+
+    story: list[Any] = []
+
+    cover_title_zh = _preferred_cover_title_zh(book.title_en, book.title_zh)
+    cover_title_en = book.title_en
+    edition_copy = _edition_front_matter(book, edition_label)
+    cover_author = book.author or "未知作者"
+
+    cover_title_style = ParagraphStyle(
+        "CoverTitleZh",
+        parent=styles["Title"],
+        fontName=fonts["title"],
+        fontSize=24,
+        leading=32,
+        alignment=TA_CENTER,
+        textColor=palette["ink"],
+        spaceAfter=10,
+    )
+    cover_subtitle_style = ParagraphStyle(
+        "CoverTitleEn",
+        parent=styles["BodyText"],
+        fontName=fonts["sans"],
+        fontSize=10.5,
+        leading=15,
+        alignment=TA_CENTER,
+        textColor=palette["muted"],
+        spaceAfter=18,
+    )
+    cover_meta_style = ParagraphStyle(
+        "CoverMeta",
+        parent=styles["BodyText"],
+        fontName=fonts["body"],
+        fontSize=11,
+        leading=16,
+        alignment=TA_CENTER,
+        textColor=palette["accent"],
+    )
+    note_heading_style = ParagraphStyle(
+        "NoteHeading",
+        parent=styles["Heading2"],
+        fontName=fonts["title"],
+        fontSize=15,
+        leading=22,
+        textColor=palette["ink"],
+        alignment=TA_LEFT,
+        spaceAfter=10,
+    )
+    note_body_style = ParagraphStyle(
+        "NoteBody",
+        parent=styles["BodyText"],
+        fontName=fonts["body"],
+        fontSize=9.5,
+        leading=15,
+        textColor=palette["ink"],
+        alignment=TA_JUSTIFY,
+        firstLineIndent=18,
+        spaceAfter=8,
+    )
+    toc_heading_style = ParagraphStyle(
+        "TocHeading",
+        parent=styles["Heading1"],
+        fontName=fonts["title"],
+        fontSize=18,
+        leading=26,
+        alignment=TA_CENTER,
+        textColor=palette["ink"],
+        spaceAfter=16,
+    )
+    part_title_style = ParagraphStyle(
+        "PartTitleZh",
+        parent=styles["Heading1"],
+        fontName=fonts["title"],
+        fontSize=19.5,
+        leading=28,
+        alignment=TA_CENTER,
+        textColor=palette["ink"],
+        spaceAfter=6,
+    )
+    part_source_style = ParagraphStyle(
+        "PartTitleEn",
+        parent=styles["BodyText"],
+        fontName=fonts["sans"],
+        fontSize=9.5,
+        leading=14,
+        alignment=TA_CENTER,
+        textColor=palette["muted"],
+        spaceAfter=18,
+    )
+    chapter_title_style = ParagraphStyle(
+        "ChapterTitleZh",
+        parent=styles["Heading1"],
+        fontName=fonts["title"],
+        fontSize=17.2,
+        leading=24,
+        alignment=TA_CENTER,
+        textColor=palette["ink"],
+        spaceAfter=5,
+    )
+    chapter_source_style = ParagraphStyle(
+        "ChapterTitleEn",
+        parent=styles["BodyText"],
+        fontName=fonts["sans"],
+        fontSize=9.2,
+        leading=13,
+        alignment=TA_CENTER,
+        textColor=palette["muted"],
+        spaceAfter=14,
+    )
+    section_heading_style = ParagraphStyle(
+        "SectionHeading",
+        parent=styles["Heading3"],
+        fontName=fonts["title"],
+        fontSize=11.8,
+        leading=16,
+        textColor=palette["accent"],
+        alignment=TA_LEFT,
+        spaceBefore=10,
+        spaceAfter=5,
+    )
+    body_style = ParagraphStyle(
+        "BodyZh",
+        parent=styles["BodyText"],
+        fontName=fonts["body"],
+        fontSize=10.2,
+        leading=18.6,
+        textColor=palette["ink"],
+        alignment=TA_JUSTIFY,
+        firstLineIndent=20,
+        spaceAfter=6,
+    )
+    body_mixed_style = ParagraphStyle(
+        "BodyZhMixed",
+        parent=body_style,
+        alignment=TA_LEFT,
+        wordWrap="CJK",
+    )
+    numbered_item_style = ParagraphStyle(
+        "NumberedItem",
+        parent=body_style,
+        leftIndent=7 * mm,
+        firstLineIndent=-5 * mm,
+        spaceBefore=0.2 * mm,
+        spaceAfter=1.1 * mm,
+    )
+    callout_style = ParagraphStyle(
+        "CalloutZh",
+        parent=body_style,
+        alignment=TA_LEFT,
+        fontSize=10.9,
+        leading=17.6,
+        firstLineIndent=0,
+        leftIndent=0,
+        rightIndent=0,
+        spaceAfter=0,
+    )
+    qa_question_style = ParagraphStyle(
+        "QaQuestion",
+        parent=section_heading_style,
+        fontName=fonts["body"],
+        fontSize=10.6,
+        leading=16,
+        textColor=palette["ink"],
+        spaceBefore=5,
+        spaceAfter=3,
+    )
+    qa_answer_style = ParagraphStyle(
+        "QaAnswer",
+        parent=body_style,
+        firstLineIndent=0,
+        leftIndent=0,
+        spaceAfter=6,
+    )
+    reference_style = ParagraphStyle(
+        "ReferenceZh",
+        parent=styles["BodyText"],
+        fontName=fonts["body"],
+        fontSize=8.6,
+        leading=12.4,
+        textColor=palette["muted"],
+        alignment=TA_LEFT,
+        firstLineIndent=0,
+        leftIndent=6,
+        spaceAfter=3,
+        splitLongWords=False,
+    )
+    toc_part_style = ParagraphStyle(
+        "TOCPart",
+        parent=styles["BodyText"],
+        fontName=fonts["body"],
+        fontSize=11,
+        leading=18,
+        textColor=palette["ink"],
+        leftIndent=0,
+        firstLineIndent=0,
+        spaceBefore=6,
+        spaceAfter=7,
+    )
+    toc_chapter_style = ParagraphStyle(
+        "TOCChapter",
+        parent=styles["BodyText"],
+        fontName=fonts["body"],
+        fontSize=10.2,
+        leading=15,
+        textColor=palette["ink"],
+        leftIndent=12,
+        firstLineIndent=0,
+        spaceBefore=2,
+        spaceAfter=3,
+    )
+
+    story.append(Spacer(1, 42 * mm))
+    story.append(Paragraph(cover_title_zh, cover_title_style))
+    story.append(Paragraph(cover_title_en, cover_subtitle_style))
+    story.append(Spacer(1, 28 * mm))
+    story.append(Paragraph(f"{cover_author}", cover_meta_style))
+    story.append(Spacer(1, 5 * mm))
+    story.append(Paragraph(edition_copy.cover_badge, cover_meta_style))
+    story.append(PageBreak())
+
+    story.append(Paragraph(edition_copy.note_heading, note_heading_style))
+    story.append(Paragraph(edition_copy.note_origin, note_body_style))
+    story.append(
+        Paragraph(
+            edition_copy.note_body,
+            note_body_style,
+        )
+    )
+    story.append(
+        Paragraph("<br/>".join(edition_copy.metadata_lines), note_body_style)
+    )
+    if book.estimated_cost_usd is not None:
+        story.append(
+            Paragraph(f"本次实际翻译成本：${book.estimated_cost_usd:.6f}", note_body_style)
+        )
+    story.append(PageBreak())
+
+    story.append(NextPageTemplate("toc"))
+    story.append(Paragraph("目录", toc_heading_style))
+    toc = TableOfContents()
+    toc.levelStyles = [toc_part_style, toc_chapter_style]
+    story.append(toc)
+    if book.chapters:
+        story.append(NextPageTemplate(_opening_template_id(book.chapters[0])))
+        story.append(PageBreak())
+
+    for index, chapter in enumerate(book.chapters):
+        title_style = part_title_style if chapter.title_kind == "part" else chapter_title_style
+        source_style = part_source_style if chapter.title_kind == "part" else chapter_source_style
+        top_spacing_mm = 18 if chapter.title_kind == "part" else 9
+        title_spacing_mm = 8 if chapter.title_kind == "part" else 4
+
+        story.append(Spacer(1, top_spacing_mm * mm))
+        heading = Paragraph(chapter.display_title, title_style)
+        heading._toc_level = 0 if chapter.title_kind == "part" else 1
+        heading._chapter_title = chapter.header_title
+        heading._toc_label_html = chapter.toc_label_html
+        story.append(heading)
+        if chapter.title_zh and chapter.title_en:
+            story.append(Paragraph(chapter.title_en, source_style))
+        story.append(Spacer(1, title_spacing_mm * mm))
+
+        for block in chapter.blocks:
+            if block.kind == "section_heading":
+                story.append(Paragraph(block.text, section_heading_style))
+            elif block.kind == "callout":
+                story.append(
+                    Table(
+                        [[Paragraph(block.text, callout_style)]],
+                        colWidths=[text_block_width],
+                        style=TableStyle(
+                            [
+                                ("BACKGROUND", (0, 0), (-1, -1), palette["callout_bg"]),
+                                ("BOX", (0, 0), (-1, -1), 0, palette["callout_bg"]),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                            ]
+                        ),
+                        hAlign="LEFT",
+                    )
+                )
+                story.append(Spacer(1, 2.2 * mm))
+            elif block.kind == "reference":
+                story.append(Paragraph(block.text, reference_style))
+            elif block.kind == "numbered_item":
+                story.append(Paragraph(block.text, numbered_item_style))
+            elif block.kind == "qa_question":
+                story.append(Paragraph(block.text, qa_question_style))
+            elif block.kind == "qa_answer":
+                story.append(Paragraph(block.text, qa_answer_style))
+            else:
+                plain_text = _strip_inline_markup(block.text)
+                paragraph_style = (
+                    body_mixed_style if _has_mixed_script_content(plain_text) else body_style
+                )
+                story.append(Paragraph(block.text, paragraph_style))
+
+        if index != len(book.chapters) - 1:
+            story.append(NextPageTemplate(_opening_template_id(book.chapters[index + 1])))
+            story.append(PageBreak())
+
+    class BookDocTemplate(BaseDocTemplate):
+        def __init__(self, filename: str) -> None:
+            super().__init__(
+                filename,
+                pagesize=A5,
+                leftMargin=margins["left"],
+                rightMargin=margins["right"],
+                topMargin=margins["top"],
+                bottomMargin=margins["bottom"],
+                title=cover_title_zh,
+                author=cover_author,
+            )
+            frame = Frame(
+                self.leftMargin,
+                self.bottomMargin,
+                self.width,
+                self.height,
+                id="normal",
+            )
+            self.current_chapter_title = ""
+            self.addPageTemplates(
+                [
+                    PageTemplate(id="front", frames=[frame], onPage=self._draw_front),
+                    PageTemplate(id="toc", frames=[frame], onPage=self._draw_toc),
+                    PageTemplate(
+                        id="part-opening",
+                        frames=[frame],
+                        onPage=self._draw_opening,
+                        autoNextPageTemplate="body",
+                    ),
+                    PageTemplate(
+                        id="chapter-opening",
+                        frames=[frame],
+                        onPage=self._draw_opening,
+                        autoNextPageTemplate="body",
+                    ),
+                    PageTemplate(id="body", frames=[frame], onPage=self._draw_body),
+                ]
+            )
+
+        def afterFlowable(self, flowable: Any) -> None:
+            if hasattr(flowable, "_chapter_title"):
+                self.current_chapter_title = flowable._chapter_title
+            if hasattr(flowable, "_toc_level"):
+                toc_label = getattr(flowable, "_toc_label_html", flowable.getPlainText())
+                self.notify("TOCEntry", (flowable._toc_level, toc_label, self.page))
+
+        def _draw_front(self, canvas: Any, doc: Any) -> None:
+            canvas.saveState()
+            canvas.setStrokeColor(palette["line"])
+            canvas.line(
+                self.leftMargin,
+                page_height - 12 * mm,
+                page_width - self.rightMargin,
+                page_height - 12 * mm,
+            )
+            canvas.restoreState()
+
+        def _draw_toc(self, canvas: Any, doc: Any) -> None:
+            canvas.saveState()
+            canvas.setStrokeColor(palette["line"])
+            canvas.line(
+                self.leftMargin,
+                page_height - 12 * mm,
+                page_width - self.rightMargin,
+                page_height - 12 * mm,
+            )
+            canvas.setFont(fonts["sans"], 8.5)
+            canvas.drawCentredString(page_width / 2, 8 * mm, str(canvas.getPageNumber()))
+            canvas.restoreState()
+
+        def _draw_opening(self, canvas: Any, doc: Any) -> None:
+            canvas.saveState()
+            canvas.setStrokeColor(palette["line"])
+            canvas.line(
+                self.leftMargin,
+                page_height - 12 * mm,
+                page_width - self.rightMargin,
+                page_height - 12 * mm,
+            )
+            canvas.setFont(fonts["sans"], 8.5)
+            canvas.drawCentredString(page_width / 2, 8 * mm, str(canvas.getPageNumber()))
+            canvas.restoreState()
+
+        def _draw_body(self, canvas: Any, doc: Any) -> None:
+            canvas.saveState()
+            canvas.setStrokeColor(palette["line"])
+            canvas.line(
+                self.leftMargin,
+                page_height - 12 * mm,
+                page_width - self.rightMargin,
+                page_height - 12 * mm,
+            )
+            canvas.setFont(fonts["sans"], 8.5)
+            canvas.setFillColor(palette["muted"])
+            left_header, right_header = running_header_texts(
+                page_number=canvas.getPageNumber(),
+                book_title=cover_title_en,
+                chapter_title=self.current_chapter_title,
+            )
+            if left_header:
+                canvas.drawString(self.leftMargin, page_height - 9 * mm, left_header)
+            if right_header:
+                canvas.drawRightString(
+                    page_width - self.rightMargin,
+                    page_height - 9 * mm,
+                    right_header,
+                )
+            canvas.setFont(fonts["sans"], 8.5)
+            canvas.drawCentredString(page_width / 2, 8 * mm, str(canvas.getPageNumber()))
+            canvas.restoreState()
+
+    doc = BookDocTemplate(str(output_path))
+    doc.multiBuild(story)
+
+
+def _edition_front_matter(book: PrintableBook, edition_label: str) -> EditionFrontMatter:
+    if edition_label == "publishing":
+        return EditionFrontMatter(
+            cover_badge="出版级翻译精排版",
+            note_heading="版本说明",
+            note_origin="正文内容来自出版级翻译终稿。",
+            note_body=(
+                "本 PDF 基于已完成的出版级翻译工作区自动重排生成。"
+                "版式经过本地书籍化渲染，"
+                "目标是在保留原书编辑风格线索的前提下，获得稳定、清晰、适合连续阅读的中文版本。"
+            ),
+            metadata_lines=[
+                f"翻译原件：{book.title_en}",
+                "开发者：ZWLF",
+                "开发方式：基于 Codex 的 Vibe Coding 翻译程序",
+                f"模型 API：{book.model}",
+                "联系方式：weiliangzeng03@gmail.com",
+                "项目地址：https://github.com/ZWLF/booksmith",
+                "公开说明：本翻译文件免费公开，欢迎大家支持我的项目。",
+            ],
+        )
+
+    return EditionFrontMatter(
+        cover_badge="工程化翻译精排版",
+        note_heading="版本说明",
+        note_origin="正文内容来自工程化翻译结果。",
+        note_body=(
+            "本 PDF 基于已完成的翻译工作区自动重排生成。"
+            "版式经过本地书籍化渲染，"
+            "目标是获得稳定、清晰、适合连续阅读的中文版本，而不是逐页复刻原版英文 PDF 的视觉设计。"
+        ),
+        metadata_lines=[
+            f"来源文件：{book.source_path}",
+            f"翻译模型：{book.model}",
+            f"提供方：{book.provider}",
+        ],
+    )
+
+
+def _opening_template_id(chapter: PrintableChapter) -> str:
+    if chapter.title_kind == "part":
+        return "part-opening"
+    return "chapter-opening"
+
+
+def _split_raw_blocks(text: str) -> list[list[str]]:
+    blocks: list[list[str]] = []
+    for raw_block in re.split(r"\n\s*\n+", text.replace("\r\n", "\n")):
+        lines = [line.strip() for line in raw_block.splitlines() if line.strip()]
+        if lines:
+            blocks.append(lines)
+    return blocks
+
+
+def _annotations_by_chapter(
+    deep_review_decisions: dict[str, Any] | None,
+) -> dict[str, list[PublishingLayoutAnnotation]]:
+    if not isinstance(deep_review_decisions, dict):
+        return {}
+
+    chapters = deep_review_decisions.get("chapters")
+    if not isinstance(chapters, list):
+        return {}
+
+    annotations_by_chapter: dict[str, list[PublishingLayoutAnnotation]] = {}
+    for chapter in chapters:
+        if not isinstance(chapter, dict):
+            continue
+        chapter_id = chapter.get("chapter_id")
+        raw_annotations = chapter.get("annotations")
+        if not isinstance(chapter_id, str) or not isinstance(raw_annotations, list):
+            continue
+        parsed_annotations: list[PublishingLayoutAnnotation] = []
+        for raw_annotation in raw_annotations:
+            if not isinstance(raw_annotation, dict):
+                continue
+            try:
+                parsed_annotations.append(PublishingLayoutAnnotation.model_validate(raw_annotation))
+            except Exception:
+                continue
+        if parsed_annotations:
+            annotations_by_chapter[chapter_id] = parsed_annotations
+    return annotations_by_chapter
+
+
+def _apply_deep_review_annotations(
+    *,
+    chapter_text: str,
+    blocks: list[PrintableBlock],
+    annotations: list[PublishingLayoutAnnotation],
+) -> list[PrintableBlock]:
+    if not annotations:
+        return blocks
+
+    updated_blocks = list(blocks)
+    for annotation in annotations:
+        if annotation.kind == "callout":
+            updated_blocks = _apply_callout_annotation(updated_blocks, annotation)
+        elif annotation.kind == "qa_block":
+            updated_blocks = _apply_qa_annotation(
+                chapter_text=chapter_text,
+                blocks=updated_blocks,
+                annotation=annotation,
+            )
+    return updated_blocks
+
+
+def _apply_callout_annotation(
+    blocks: list[PrintableBlock],
+    annotation: PublishingLayoutAnnotation,
+) -> list[PrintableBlock]:
+    callout_text = str(annotation.payload.get("text", "")).strip()
+    if not callout_text:
+        return blocks
+
+    target = _normalize_annotation_match_text(callout_text)
+    for index, block in enumerate(blocks):
+        if block.kind == "reference":
+            continue
+        block_text = _normalize_annotation_match_text(_strip_inline_markup(block.text))
+        if not block_text:
+            continue
+        if target in block_text or block_text in target:
+            preserved_text = block.text if _contains_inline_markup(block.text) else callout_text
+            blocks[index] = PrintableBlock(kind="callout", text=preserved_text)
+            break
+    return blocks
+
+
+def _apply_qa_annotation(
+    *,
+    chapter_text: str,
+    blocks: list[PrintableBlock],
+    annotation: PublishingLayoutAnnotation,
+) -> list[PrintableBlock]:
+    anchor = str(annotation.payload.get("anchor", "")).strip()
+    qa_blocks = _build_qa_blocks(anchor=anchor or chapter_text, payload=annotation.payload)
+    if not qa_blocks:
+        return blocks
+
+    target = _normalize_annotation_match_text(anchor)
+    for index, block in enumerate(blocks):
+        block_text = _normalize_annotation_match_text(_strip_inline_markup(block.text))
+        if not block_text:
+            continue
+        if target and target not in block_text and block_text not in target:
+            continue
+        remainder = _remove_duplicate_qa_trailing_paragraph(
+            blocks=blocks,
+            replaced_index=index,
+            qa_blocks=qa_blocks,
+        )
+        return [*blocks[:index], *qa_blocks, *remainder]
+    return blocks
+
+
+def _build_qa_blocks(*, anchor: str, payload: dict[str, str | int | bool]) -> list[PrintableBlock]:
+    lines = [line.strip() for line in anchor.splitlines() if line.strip()]
+    if len(lines) < 2:
+        compact_split = _split_compact_qa_anchor(anchor=anchor, payload=payload)
+        if compact_split is None:
+            return []
+        question_line, answer_line = compact_split
+        return [
+            PrintableBlock(kind="qa_question", text=question_line),
+            PrintableBlock(kind="qa_answer", text=answer_line),
+        ]
+
+    question_line = next((line for line in lines if _is_question_marker_line(line)), "")
+    answer_line = next((line for line in lines if _is_answer_marker_line(line)), "")
+    if not question_line or not answer_line:
+        if not _annotation_signals_qa_structure(payload):
+            return []
+        question_line = lines[0]
+        answer_line = lines[1]
+
+    return [
+        PrintableBlock(kind="qa_question", text=question_line),
+        PrintableBlock(kind="qa_answer", text=answer_line),
+    ]
+
+
+def _normalize_annotation_match_text(text: str) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    compact = compact.replace("“", "").replace("”", "").replace('"', "")
+    return _tighten_mixed_text_spacing(compact).replace(" ", "")
+
+
+def _normalize_key(text: str) -> str:
+    return "".join(
+        character
+        for character in text.lower()
+        if character.isalnum() or "\u4e00" <= character <= "\u9fff"
+    )
+
+
+def _annotation_signals_qa_structure(payload: dict[str, str | int | bool]) -> bool:
+    return "has_question_marker" in payload or "has_answer_marker" in payload
+
+
+def _remove_duplicate_qa_trailing_paragraph(
+    *,
+    blocks: list[PrintableBlock],
+    replaced_index: int,
+    qa_blocks: list[PrintableBlock],
+) -> list[PrintableBlock]:
+    remainder = list(blocks[replaced_index + 1 :])
+    if not remainder:
+        return remainder
+
+    next_block = remainder[0]
+    if next_block.kind != "paragraph":
+        return remainder
+
+    answer_text = _strip_inline_markup(qa_blocks[-1].text)
+    next_text = _strip_inline_markup(next_block.text)
+    if _is_duplicate_qa_trailing_paragraph(answer_text=answer_text, paragraph_text=next_text):
+        return remainder[1:]
+    return remainder
+
+
+def _is_duplicate_qa_trailing_paragraph(*, answer_text: str, paragraph_text: str) -> bool:
+    normalized_answer = _normalize_annotation_match_text(answer_text)
+    normalized_paragraph = _normalize_annotation_match_text(paragraph_text)
+    if not normalized_answer or not normalized_paragraph:
+        return False
+    if normalized_paragraph == normalized_answer:
+        return True
+    return normalized_answer.endswith(normalized_paragraph)
+
+
+def _split_compact_qa_anchor(
+    *,
+    anchor: str,
+    payload: dict[str, str | int | bool],
+) -> tuple[str, str] | None:
+    compact = re.sub(r"\s+", " ", anchor).strip()
+    if not compact or not _annotation_signals_qa_structure(payload):
+        return None
+
+    explicit_marker_match = re.match(
+        r"^\s*((?:Q|Question|问)\s*[:：].+?)\s+((?:A|Answer|答)\s*[:：].+)\s*$",
+        compact,
+        re.IGNORECASE,
+    )
+    if explicit_marker_match:
+        return explicit_marker_match.group(1).strip(), explicit_marker_match.group(2).strip()
+
+    question_break = re.search(r"[?？]", compact)
+    if question_break:
+        question_line = compact[: question_break.end()].strip()
+        answer_line = compact[question_break.end() :].strip()
+        if question_line and answer_line:
+            return question_line, answer_line
+
+    sentence_break = re.search(r"[.!?。！？]", compact)
+    if sentence_break:
+        question_line = compact[: sentence_break.end()].strip()
+        answer_line = compact[sentence_break.end() :].strip()
+        if question_line and answer_line:
+            return question_line, answer_line
+
+    return None
+
+
+def _clean_block_lines(lines: list[str], *, preserve_leading_number: bool = False) -> list[str]:
+    cleaned: list[str] = []
+    for index, line in enumerate(lines):
+        value = _normalize_line(line, keep_number_line=preserve_leading_number and index == 0)
+        if not value:
+            continue
+        cleaned.append(value)
+    return cleaned
+
+
+def _extract_chapter_title_zh(lines: list[str]) -> tuple[str | None, list[str]]:
+    if not lines:
+        return None, lines
+
+    first_line = lines[0]
+    if _looks_like_chapter_heading(first_line) and _contains_chinese(first_line):
+        remainder = lines[1:]
+        if remainder and first_line.rstrip().endswith(("：", ":")):
+            second_line = remainder[0]
+            if _looks_like_translated_title_candidate(second_line):
+                return f"{first_line}{second_line}", remainder[1:]
+        return first_line, remainder
+
+    if _looks_like_translated_title_candidate(first_line):
+        return first_line, lines[1:]
+
+    return None, lines
+
+
+def _classify_title_kind(title_en: str, title_zh: str | None) -> str:
+    if not title_en and not title_zh:
+        return "fallback"
+    if title_en.lower().startswith("part "):
+        return "part"
+    if title_zh and title_zh.startswith("第") and "部分" in title_zh:
+        return "part"
+    return "chapter"
+
+
+def _build_header_title(title_en: str, title_zh: str | None) -> str:
+    return title_zh or title_en or "未命名章节"
+
+
+def _build_toc_label_html(title_en: str, title_zh: str | None) -> str:
+    escaped_title_en = xml_escape(title_en)
+    if not title_zh:
+        return escaped_title_en
+    escaped_title_zh = xml_escape(title_zh)
+    return (
+        f"{escaped_title_zh}<br/>"
+        f"<font size='8.5' color='#6B6259'>{escaped_title_en}</font>"
+    )
+
+
+def _build_block_text(lines: list[str], citation_numbers: list[str]) -> str:
+    text = _style_inline_citation_numbers(_tighten_mixed_text_spacing(_combine_flow_lines(lines)))
+    if not citation_numbers:
+        return text
+    citation_markup = _render_citation_markup(citation_numbers)
+    return f"{text}{citation_markup}"
+
+
+def _tighten_mixed_text_spacing(text: str) -> str:
+    value = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9@#&])", "", text)
+    value = re.sub(r"(?<=[A-Za-z0-9@#&])\s+(?=[\u4e00-\u9fff])", "", value)
+    value = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[（(])", "", value)
+    value = re.sub(r"(?<=[）)])\s+(?=[\u4e00-\u9fff])", "", value)
+    value = re.sub(r"(?<=[A-Za-z])\s+(?=\d)", " ", value)
+    value = re.sub(r"(?<=\d)\s+(?=[A-Za-z])", " ", value)
+    return value
+
+
+def _style_inline_citation_numbers(text: str) -> str:
+    pattern = re.compile(r"([。！？!?；;:：”’」】）)])\s*(\d{2,4})")
+    segments: list[str] = []
+    last_end = 0
+    for match in pattern.finditer(text):
+        next_char = text[match.end() : match.end() + 1]
+        if next_char and not next_char.isspace():
+            if not _contains_chinese(next_char) or next_char in {"年", "月", "日", "号"}:
+                continue
+        segments.append(xml_escape(text[last_end : match.start()]))
+        segments.append(xml_escape(match.group(1)))
+        segments.append(_render_citation_markup([match.group(2)]))
+        last_end = match.end()
+    segments.append(xml_escape(text[last_end:]))
+    return "".join(segments)
+
+
+def _render_citation_markup(numbers: list[str]) -> str:
+    return "".join(
+        f"<font color='#2F5BD2' size='6.8'><super>{xml_escape(number)}</super></font>"
+        for number in numbers
+    )
+
+
+def _has_mixed_script_content(text: str) -> bool:
+    return _contains_chinese(text) and bool(re.search(r"[A-Za-z0-9]", text))
+
+
+def _combine_flow_lines(lines: list[str]) -> str:
+    if not lines:
+        return ""
+    combined = lines[0]
+    for line in lines[1:]:
+        if re.search(r"[A-Za-z0-9]$", combined) and re.match(r"[A-Za-z0-9]", line):
+            combined += f" {line}"
+        else:
+            combined += line
+    return combined
+
+
+def _strip_inline_markup(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text)
+
+
+def _contains_inline_markup(text: str) -> bool:
+    return "<" in text and ">" in text
+
+
+def _extract_trailing_citation_numbers(lines: list[str]) -> tuple[list[str], list[str]]:
+    normalized = [
+        value
+        for line in lines
+        if (value := _normalize_line(line, keep_number_line=True))
+    ]
+    citation_numbers: list[str] = []
+    while normalized and re.fullmatch(r"\d+", normalized[-1]):
+        citation_numbers.insert(0, normalized.pop())
+    return normalized, citation_numbers
+
+
+def _split_semantic_lines(lines: list[str]) -> list[list[str]]:
+    normalized = [
+        value
+        for line in lines
+        if (value := _normalize_line(line, keep_number_line=True))
+    ]
+    if not normalized:
+        return []
+    if re.fullmatch(r"\d+", normalized[0]):
+        return [normalized]
+    if normalized and all(_looks_like_numbered_item(value) for value in normalized):
+        return [[value] for value in normalized]
+
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for value in normalized:
+        if re.fullmatch(r"\d+", value):
+            if current and re.fullmatch(r"\d+", current[0]):
+                blocks.append(current)
+                current = [value]
+                continue
+            if current:
+                current.append(value)
+                blocks.append(current)
+                current = []
+                continue
+        current.append(value)
+
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+def _extract_reference_entries(lines: list[str]) -> list[str]:
+    entries: list[str] = []
+    current_number: str | None = None
+    current_parts: list[str] = []
+
+    for line in lines:
+        value = _normalize_line(line, keep_number_line=True)
+        if not value:
+            continue
+        if re.fullmatch(r"\d+", value):
+            if current_number and current_parts:
+                entries.append(f"{current_number} {' '.join(current_parts)}".strip())
+            current_number = value
+            current_parts = []
+            continue
+        if current_number is None:
+            return []
+        current_parts.append(value)
+
+    if current_number and current_parts:
+        entries.append(f"{current_number} {' '.join(current_parts)}".strip())
+
+    if len(entries) < 2:
+        return []
+    return entries
+
+
+def _normalize_line(line: str, *, keep_number_line: bool = False) -> str:
+    value = re.sub(r"^#{1,6}\s*", "", line).strip()
+    if _is_translation_preface(value):
+        return ""
+    if _is_prompt_wrapper(value):
+        return ""
+    if _is_horizontal_rule(value):
+        return ""
+    value = value.replace("**", "").replace("__", "")
+    value = re.sub(r"^\*(.+)\*$", r"\1", value)
+    if not value:
+        return ""
+    if not keep_number_line and re.fullmatch(r"\d+", value):
+        return ""
+    return value
+
+
+def _looks_like_chapter_heading(text: str) -> bool:
+    if text.startswith(("第", "PART", "Part")) and any(
+        token in text for token in ("章", "部分", "Chapter", "PART")
+    ):
+        return True
+    return False
+
+
+def _looks_like_section_heading(text: str) -> bool:
+    if _is_book_title(text) or _looks_like_chapter_heading(text):
+        return True
+    if len(text) <= 24 and not re.search(r"[。！？；.!?;:]$", text):
+        return True
+    if text.isupper() and len(text) <= 80:
+        return True
+    return False
+
+
+def _looks_like_numbered_item(text: str) -> bool:
+    return re.match(r"^\d{1,3}\.\s+\S", text) is not None
+
+
+def _looks_like_callout(lines: list[str], citation_numbers: list[str]) -> bool:
+    if not citation_numbers:
+        return False
+    candidate = _tighten_mixed_text_spacing(_combine_flow_lines(lines)).strip()
+    if not candidate or len(candidate) > 54:
+        return False
+    if candidate.startswith(("Q:", "A:", "问：", "答：")):
+        return False
+    if _looks_like_chapter_heading(candidate) or _is_book_title(candidate):
+        return False
+    return True
+
+
+def _is_question_marker_line(text: str) -> bool:
+    return bool(re.match(r"^\s*(?:Q|Question|问)\s*[:：]\s*\S", text, re.IGNORECASE))
+
+
+def _is_answer_marker_line(text: str) -> bool:
+    return bool(re.match(r"^\s*(?:A|Answer|答)\s*[:：]\s*\S", text, re.IGNORECASE))
+
+
+def _is_book_title(text: str) -> bool:
+    return text.startswith("《") and text.endswith("》")
+
+
+def _contains_chinese(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text))
+
+
+def _looks_like_translated_title_candidate(text: str) -> bool:
+    candidate = text.strip()
+    if not candidate or not _contains_chinese(candidate):
+        return False
+    if len(candidate) > 34:
+        return False
+    if re.search(r"[。！？；!?]$", candidate):
+        return False
+
+    visible_chars = [char for char in candidate if not char.isspace()]
+    if not visible_chars:
+        return False
+    chinese_chars = [char for char in visible_chars if re.match(r"[\u4e00-\u9fff]", char)]
+    if len(chinese_chars) < 3:
+        return False
+    return len(chinese_chars) / len(visible_chars) >= 0.45
+
+
+def _parse_title_and_author(stem: str) -> tuple[str, str | None]:
+    match = re.match(r"^(?P<title>.+?)\s*\((?P<author>[^()]+)\)$", stem)
+    if not match:
+        return _normalize_book_title(stem), None
+    return _normalize_book_title(match.group("title").strip()), match.group("author").strip()
+
+
+def _normalize_book_title(title: str) -> str:
+    if title == "The Book of Elon A Guide to Purpose and Success":
+        return "The Book of Elon: A Guide to Purpose and Success"
+    return title
+
+
+def _preferred_chapter_title_zh(title_en: str, title_zh: str | None) -> str | None:
+    if not title_zh:
+        return None
+    normalized = re.sub(r"^(.+?)核心法则(\d+)条$", r"\1的 \2 条核心法则", title_zh)
+    if title_en == "The 69 Core Musk Methods" and normalized == title_zh:
+        return "马斯克的 69 条核心法则"
+    return normalized
+
+
+def _preferred_cover_title_zh(title_en: str, title_zh: str | None) -> str:
+    if title_en == "The Book of Elon: A Guide to Purpose and Success":
+        return "埃隆之书：使命与成功指南"
+    return title_zh or f"{title_en} 简体中文版"
+
+
+def _source_stem(source_path: str) -> str:
+    if re.match(r"^[A-Za-z]:\\", source_path) or "\\" in source_path:
+        return PureWindowsPath(source_path).stem
+    return PurePosixPath(source_path).stem
+
+
+def _truncate_for_header(text: str, max_length: int = 22) -> str:
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 1] + "…"
+
+
+def running_header_texts(
+    *,
+    page_number: int,
+    book_title: str,
+    chapter_title: str,
+) -> tuple[str, str]:
+    short_book_title = _short_book_title(book_title)
+    if page_number % 2 == 0:
+        return _truncate_for_header(short_book_title, max_length=18), ""
+    return "", _truncate_for_header(chapter_title, max_length=22)
+
+
+def _short_book_title(text: str) -> str:
+    for separator in (" A Guide to ", ": ", " - ", " — ", " | "):
+        if separator in text:
+            return text.split(separator, maxsplit=1)[0].strip()
+    return text
+
+
+def _is_translation_preface(text: str) -> bool:
+    if not text.startswith("以下是"):
+        return False
+    if "简体中文" not in text:
+        return False
+    return "翻译" in text or "内容" in text
+
+
+def _is_prompt_wrapper(text: str) -> bool:
+    if text.startswith(
+        ("本书：", "这本书：", "书名：", "章节：", "分块索引：", "原文片段索引：", "翻译如下")
+    ):
+        return True
+    if all(marker in text for marker in ("本书：", "章节：", "分块索引：")):
+        return True
+    if text.startswith(("本书", "这本书", "书名")) and "原文片段索引：" in text:
+        return True
+    return False
+
+
+def _is_horizontal_rule(text: str) -> bool:
+    return bool(re.fullmatch(r"[-*_]{3,}", text))
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _register_book_fonts(pdfmetrics: Any, TTFont: Any, UnicodeCIDFont: Any) -> dict[str, str]:
+    font_candidates = {
+        "title": [
+            ("BookTitle", Path(r"C:\Windows\Fonts\STZHONGS.TTF")),
+            ("BookTitle", Path(r"C:\Windows\Fonts\simsunb.ttf")),
+        ],
+        "body": [
+            ("BookBody", Path(r"C:\Windows\Fonts\STSONG.TTF")),
+            ("BookBody", Path(r"C:\Windows\Fonts\simsun.ttc")),
+        ],
+        "sans": [
+            ("BookSans", Path(r"C:\Windows\Fonts\msyh.ttc")),
+            ("BookSans", Path(r"C:\Windows\Fonts\msyhbd.ttc")),
+        ],
+    }
+    registered: dict[str, str] = {}
+
+    for role, candidates in font_candidates.items():
+        for font_name, font_path in candidates:
+            if not font_path.exists():
+                continue
+            try:
+                if font_name not in pdfmetrics.getRegisteredFontNames():
+                    pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
+                registered[role] = font_name
+                break
+            except Exception:
+                continue
+        if role not in registered:
+            try:
+                if "STSong-Light" not in pdfmetrics.getRegisteredFontNames():
+                    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+                registered[role] = "STSong-Light"
+            except Exception as exc:
+                raise RuntimeError(f"Unable to register a usable font for {role}.") from exc
+
+    return registered

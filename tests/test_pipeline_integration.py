@@ -4,10 +4,10 @@ import pytest
 from ebooklib import epub
 from typer.testing import CliRunner
 
-from book_translator.cli import app
-from book_translator.config import RunConfig
-from book_translator.pipeline import process_book
-from book_translator.providers.base import BaseProvider
+from booksmith.cli import app
+from booksmith.config import RunConfig
+from booksmith.pipeline import process_book
+from booksmith.providers.base import BaseProvider
 
 
 class FakeProvider(BaseProvider):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from book_translator.models import PublishingAuditFinding
-from book_translator.publishing.source_audit import audit_source_against_target
+from booksmith.models import PublishingAuditFinding
+from booksmith.publishing.source_audit import audit_source_against_target
 
 
 def _finding_types(findings: list[PublishingAuditFinding]) -> list[str]:

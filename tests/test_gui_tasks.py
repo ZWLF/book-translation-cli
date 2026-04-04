@@ -4,9 +4,9 @@ from pathlib import Path
 from queue import Queue
 from threading import Event
 
-from book_translator.config import RunConfig
-from book_translator.gui.state import GuiRuntimeRequest
-from book_translator.gui.tasks import GuiTaskRunner
+from booksmith.config import RunConfig
+from booksmith.gui.state import GuiRuntimeRequest
+from booksmith.gui.tasks import GuiTaskRunner
 
 
 class _UnsupportedSummary:

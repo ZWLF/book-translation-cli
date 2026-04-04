@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from book_translator.models import PublishingAuditFinding
-from book_translator.publishing.consensus import (
+from booksmith.models import PublishingAuditFinding
+from booksmith.publishing.consensus import (
     arbiter_fix_candidates,
     build_arbitration_queue,
     finding_consensus_key,

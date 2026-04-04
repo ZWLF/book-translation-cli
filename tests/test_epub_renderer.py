@@ -4,13 +4,13 @@ import base64
 import zipfile
 from pathlib import Path
 
-from book_translator.models import (
+from booksmith.models import (
     PublishingAsset,
     PublishingBlock,
     StructuredPublishingBook,
     StructuredPublishingChapter,
 )
-from book_translator.output.epub_renderer import render_structured_epub
+from booksmith.output.epub_renderer import render_structured_epub
 
 _PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0ioAAAAASUVORK5CYII="

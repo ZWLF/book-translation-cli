@@ -7,19 +7,19 @@ from queue import Queue
 
 import pytest
 
-from book_translator.gui.app import BookTranslatorGui
-from book_translator.gui.services import GuiFormValidationError, GuiValidationIssue
-from book_translator.gui.state import GuiRuntimeRequest
-from book_translator.gui.tasks import GuiTaskRunner
-from book_translator.utils import slugify
+from booksmith.gui.app import BooksmithGui
+from booksmith.gui.services import GuiFormValidationError, GuiValidationIssue
+from booksmith.gui.state import GuiRuntimeRequest
+from booksmith.gui.tasks import GuiTaskRunner
+from booksmith.utils import slugify
 
 
-def _create_gui(**kwargs: object) -> BookTranslatorGui:
+def _create_gui(**kwargs: object) -> BooksmithGui:
     try:
         root = tk.Tk()
     except tk.TclError as exc:
         pytest.skip(f"Tk unavailable in this environment: {exc}")
-    return BookTranslatorGui(root=root, **kwargs)
+    return BooksmithGui(root=root, **kwargs)
 
 
 class _FakeTaskRunner:
@@ -43,7 +43,7 @@ class _FailingStartTaskRunner:
 
 
 def _configure_engineering_form(
-    app: BookTranslatorGui,
+    app: BooksmithGui,
     input_path: Path,
     output_path: Path,
 ) -> None:
@@ -55,7 +55,7 @@ def _configure_engineering_form(
 
 
 def _configure_publishing_form(
-    app: BookTranslatorGui,
+    app: BooksmithGui,
     input_path: Path,
     output_path: Path,
 ) -> None:
@@ -72,7 +72,7 @@ def _configure_publishing_form(
 def test_gui_app_bootstraps_without_mainloop() -> None:
     app = _create_gui()
     try:
-        assert app.root.title() == "Book Translator"
+        assert app.root.title() == "Booksmith"
         assert app.mode_var.get() == "engineering"
         assert app.publishing_frame.winfo_manager() == ""
         assert app.task_runner._event_queue is app.event_queue
@@ -807,8 +807,13 @@ def test_gui_entry_points_are_declarable() -> None:
     pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
 
-    assert pyproject["project"]["scripts"]["book-translator-gui"] == "book_translator.gui.app:main"
+    assert pyproject["project"]["name"] == "booksmith"
+    assert pyproject["project"]["description"] == (
+        "Booksmith: engineering and publishing workflows for translating books."
+    )
+    assert pyproject["project"]["scripts"]["booksmith"] == "booksmith.cli:main"
+    assert pyproject["project"]["scripts"]["booksmith-gui"] == "booksmith.gui.app:main"
 
-    from book_translator.gui import __main__ as module_main
+    from booksmith.gui import __main__ as module_main
 
     assert callable(module_main.main)

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from book_translator.config import RunConfig
+from booksmith.config import RunConfig
 
 
 def test_resolved_api_key_falls_back_to_dotenv(

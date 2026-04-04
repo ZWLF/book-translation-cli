@@ -1,12 +1,12 @@
 from pathlib import Path
 
-from book_translator.models import (
+from booksmith.models import (
     PublishingAuditFinding,
     PublishingChapterArtifact,
     PublishingLayoutAnnotation,
     PublishingStageState,
 )
-from book_translator.state.workspace import Workspace
+from booksmith.state.workspace import Workspace
 
 
 def test_publishing_workspace_exposes_artifact_paths(tmp_path: Path) -> None:

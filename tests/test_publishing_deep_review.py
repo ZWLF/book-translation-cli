@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from book_translator.models import (
+from booksmith.models import (
     Chapter,
     PublishingAuditFinding,
     PublishingBlock,
@@ -8,10 +8,10 @@ from book_translator.models import (
     StructuredPublishingBook,
     StructuredPublishingChapter,
 )
-from book_translator.output.assembler import assemble_structured_publishing_output_text
-from book_translator.publishing.deep_review import run_deep_review
-from book_translator.publishing.editorial_revision import apply_editorial_repairs
-from book_translator.publishing.layout_review import generate_layout_annotations
+from booksmith.output.assembler import assemble_structured_publishing_output_text
+from booksmith.publishing.deep_review import run_deep_review
+from booksmith.publishing.editorial_revision import apply_editorial_repairs
+from booksmith.publishing.layout_review import generate_layout_annotations
 
 
 def test_apply_editorial_repairs_restores_numbered_list_blocks() -> None:
@@ -284,7 +284,7 @@ def test_run_deep_review_forwards_source_title_to_source_audit(monkeypatch) -> N
         return []
 
     monkeypatch.setattr(
-        "book_translator.publishing.deep_review.audit_source_against_target",
+        "booksmith.publishing.deep_review.audit_source_against_target",
         fake_audit_source_against_target,
     )
 

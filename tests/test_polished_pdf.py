@@ -2,7 +2,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from book_translator.models import (
+from booksmith.models import (
     Chunk,
     Manifest,
     PublishingAsset,
@@ -12,7 +12,7 @@ from book_translator.models import (
     StructuredPublishingChapter,
     TranslationResult,
 )
-from book_translator.output.polished_pdf import (
+from booksmith.output.polished_pdf import (
     PrintableBlock,
     PrintableBook,
     PrintableChapter,
@@ -24,8 +24,8 @@ from book_translator.output.polished_pdf import (
     render_polished_pdf_from_structured_book,
     running_header_texts,
 )
-from book_translator.publishing.layout_review import generate_layout_annotations
-from book_translator.publishing.source_audit import audit_source_against_target
+from booksmith.publishing.layout_review import generate_layout_annotations
+from booksmith.publishing.source_audit import audit_source_against_target
 
 
 def _chunk(
@@ -1502,7 +1502,7 @@ def test_render_polished_pdf_uses_publishing_front_matter(tmp_path: Path) -> Non
     assert "Codex" in extracted
     assert "Vibe Coding" in extracted
     assert "weiliangzeng03@gmail.com" in extracted
-    assert "https://github.com/ZWLF/book-translation-cli" in extracted
+    assert "https://github.com/ZWLF/booksmith" in extracted
     assert "免费公开" in extracted
     assert "支持我的项目" in extracted
     assert "本次实际翻译成本：$0.120000" in extracted

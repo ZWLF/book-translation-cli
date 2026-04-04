@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from book_translator.config import PublishingRunConfig
+from booksmith.config import PublishingRunConfig
 
 
 def test_publishing_run_config_defaults() -> None:

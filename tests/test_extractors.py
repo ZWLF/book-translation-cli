@@ -4,8 +4,8 @@ from ebooklib import epub
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 
-from book_translator.extractors.epub import extract_epub
-from book_translator.extractors.pdf import extract_pdf
+from booksmith.extractors.epub import extract_epub
+from booksmith.extractors.pdf import extract_pdf
 
 
 def _write_text_pdf(path: Path, lines: list[str]) -> None:

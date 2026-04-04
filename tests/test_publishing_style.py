@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from book_translator.publishing import (
+from booksmith.publishing import (
     DraftRequest,
     StyleProfile,
     build_draft_request,

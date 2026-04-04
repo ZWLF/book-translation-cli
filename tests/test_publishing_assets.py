@@ -7,7 +7,7 @@ from pathlib import Path
 from ebooklib import epub
 from reportlab.pdfgen import canvas
 
-from book_translator.publishing.assets import extract_source_assets, write_asset_manifest
+from booksmith.publishing.assets import extract_source_assets, write_asset_manifest
 
 _PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0ioAAAAASUVORK5CYII="
