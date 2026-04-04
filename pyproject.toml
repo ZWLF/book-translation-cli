@@ -34,6 +34,7 @@ dev = [
 
 [project.scripts]
 book-translator = "book_translator.cli:main"
+book-translator-gui = "book_translator.gui.app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
