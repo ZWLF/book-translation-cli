@@ -218,7 +218,22 @@ def publishing(
         enable_cross_review=enable_cross_review,
         image_policy=image_policy,
     )
-    _run_books_with_cli_progress(
+    _run_async_sync(
+        _run_publishing_cli(
+            input_path=input_path,
+            output_path=output_path,
+            config=config,
+        )
+    )
+
+
+async def _run_publishing_cli(
+    *,
+    input_path: Path,
+    output_path: Path,
+    config: PublishingRunConfig,
+) -> list[dict[str, object]]:
+    return _run_books_with_cli_progress(
         description="Processing publishing books",
         runner=lambda event_listener: run_publishing_books_sync(
             input_path=input_path,
