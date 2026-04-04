@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -174,3 +175,21 @@ class PublishingAuditFinding(BaseModel):
 class PublishingLayoutAnnotation(BaseModel):
     kind: str
     payload: dict[str, str | int | bool] = Field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class PublishingGateInputs:
+    unresolved_count: int
+    high_severity_count: int
+    structural_issue_count: int
+    citation_issue_count: int
+    image_or_caption_issue_count: int
+    visual_blocker_count: int
+    primary_output_validation_passed: bool
+    cross_output_validation_passed: bool
+    fidelity_score: float
+    structure_score: float
+    terminology_score: float
+    layout_score: float
+    source_style_alignment_score: float
+    epub_integrity_score: float
