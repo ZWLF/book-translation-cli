@@ -1,40 +1,36 @@
-# book-translation-cli
+# Booksmith
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-这是一个面向文字版 PDF 和 EPUB 图书的命令行翻译工具。它同时提供两条工作流：一条偏工程化，适合快速批量翻译；一条偏出版级，支持原文对照审计、结构化修复、精排 PDF 和可重排 EPUB 输出。
+Booksmith 是一个用于将文字版 PDF 和 EPUB 图书翻译成简体中文的命令行工具。它在同一套底层能力上提供两条工作流：
 
-## 模式
-
-- `engineering`：强调准确、可恢复、成本可控，适合批量处理
-- `publishing`：强调质量优先，适合非虚构图书，带修订、校对、终审、结构化审计和深度复核
-
-为了兼容旧用法，顶层命令仍然是 `engineering` 的别名。
+- `engineering`：面向批量处理的准确、可续跑、成本可控翻译
+- `publishing`：面向非虚构图书的高质量翻译，包含分阶段修订、校对、终审、结构化原文审计、仲裁和深度复核
 
 ## GUI
 
-桌面 GUI 是一个独立的本地入口，和 CLI 共用同一套翻译流水线。它是 CLI 的补充，不是替代品。
+桌面 GUI 是一个独立的本地入口，与 CLI 共享同一套翻译流水线。它是 CLI 的补充，不是替代品。
 
-GUI 适合需要交互式本地应用的场景，提供工程化和出版级两种模式，以及进度、日志和结果视图。CLI 仍然是自动化、脚本和批处理的首选入口。
+如果你希望在本地通过图形界面操作，并查看工程化模式、出版级模式、进度、日志和结果视图，可以使用 GUI。若需要自动化、脚本化或批量处理，则使用 CLI。
 
-启动 GUI 可使用以下任一命令：
+可以通过下面任一命令启动 GUI：
 
 ```bash
-book-translator-gui
-python -m book_translator.gui
+booksmith-gui
+python -m booksmith.gui
 ```
 
 ## 功能
 
-- 从文字版 PDF 和 EPUB 中提取正文
-- 优先利用书签或目录保留章节结构，再回退到标题规则
+- 从文字版 PDF / EPUB 中提取文本
+- 优先通过书签或目录保留章节结构，再回退到标题规则
 - 按章节分块并发翻译
 - 支持 OpenAI 和 Gemini API
-- 对可恢复错误做指数退避重试
+- 对可恢复错误使用指数退避重试
 - 支持断点续跑和分阶段重跑
 - 生成适合阅读的中文精排 PDF
-- 从出版级结构化内容生成可重排 EPUB
-- 输出原文对照审计、复核共识、修复记录和视觉 QA 截图
+- 从结构化出版流水线生成可重排 EPUB
+- 输出原文审计、共识结果、修复日志和 QA 截图
 
 ## 安装
 
@@ -46,13 +42,13 @@ python -m venv .venv
 pip install -e .[dev]
 ```
 
-### Conda 兜底方案
+### Conda 备用方案
 
 如果本地 Python 与依赖不兼容：
 
 ```bash
-conda create -n book-translation-cli-py311 python=3.11
-conda activate book-translation-cli-py311
+conda create -n booksmith-py311 python=3.11
+conda activate booksmith-py311
 pip install -e .[dev]
 ```
 
@@ -68,74 +64,68 @@ pip install -e .[dev]
 ### 工程化模式
 
 ```bash
-book-translator engineering --input ./books --output ./out --provider gemini --resume
-```
-
-兼容别名：
-
-```bash
-book-translator --input ./books --output ./out --provider gemini --resume
+booksmith engineering --input ./books --output ./out --provider gemini --resume
 ```
 
 ### 出版级模式
 
 ```bash
-book-translator publishing --input ./books --output ./out --provider openai --model gpt-4o-mini
+booksmith publishing --input ./books --output ./out --provider openai --model gpt-4o-mini
 ```
 
 默认输出会跟随输入格式：
 
-- 输入 `PDF` 时，主输出是 `publishing/final/translated.pdf`
-- 输入 `EPUB` 时，主输出是 `publishing/final/translated.epub`
+- 输入 `PDF` 时，主输出为 `publishing/final/translated.pdf`
+- 输入 `EPUB` 时，主输出为 `publishing/final/translated.epub`
 
-跨格式输出必须显式指定：
+跨格式输出需要显式开启：
 
 ```bash
-book-translator publishing --input ./books/book.pdf --output ./out --also-epub
-book-translator publishing --input ./books/book.epub --output ./out --also-pdf
+booksmith publishing --input ./books/book.pdf --output ./out --also-epub
+booksmith publishing --input ./books/book.epub --output ./out --also-pdf
 ```
 
-如果只想从后半段出版流程继续跑：
+只重跑后续编辑阶段：
 
 ```bash
-book-translator publishing --input ./books --output ./out --from-stage revision --to-stage final-review
+booksmith publishing --input ./books --output ./out --from-stage revision --to-stage final-review
 ```
 
-运行原文对照 `deep-review` 并重建最终交付物：
+运行原文对照 `deep-review`，并重建最终交付物：
 
 ```bash
-book-translator publishing --input ./books --output ./out --from-stage final-review --to-stage deep-review --render-pdf
+booksmith publishing --input ./books --output ./out --from-stage final-review --to-stage deep-review --render-pdf
 ```
 
-如果只想先生成术语表：
+只生成术语表，方便检查：
 
 ```bash
-book-translator publishing --input ./books --output ./out --to-stage lexicon
+booksmith publishing --input ./books --output ./out --to-stage lexicon
 ```
 
-无需重新调用翻译 API，直接从已有工作区重新生成 PDF：
+在已有工作区上重新生成精排 PDF，而不再次调用翻译 API：
 
 ```bash
-book-translator render-pdf --workspace ./out/book-name
+booksmith render-pdf --workspace ./out/book-name
 ```
 
-把指定 PDF 页面导出成 PNG：
+导出指定 PDF 页为 PNG：
 
 ```bash
-book-translator render-pages --pdf ./out/book-name/translated.pdf --output-dir ./tmp/pages --pages 1,3-5
+booksmith render-pages --pdf ./out/book-name/translated.pdf --output-dir ./tmp/pages --pages 1,3-5
 ```
 
 生成工作区内的视觉 QA 截图集：
 
 ```bash
-book-translator qa-pdf --workspace ./out/book-name
+booksmith qa-pdf --workspace ./out/book-name
 ```
 
-如果工程版 PDF 不存在，但 `publishing/final/translated.pdf` 存在，`qa-pdf` 会自动使用出版版 PDF，并把截图写到 `publishing/qa/`。
+如果工程版 PDF 不存在，但 `publishing/final/translated.pdf` 存在，`qa-pdf` 会自动使用出版版 PDF，并将截图写入 `publishing/qa/`。
 
 ## 每本书的输出
 
-每本处理完成的书都会在输出根目录下生成独立工作区。
+每个处理完成的书都会在输出根目录下生成独立的工作区目录。
 
 ### 工程化输出
 
@@ -170,7 +160,7 @@ book-translator qa-pdf --workspace ./out/book-name
 - `publishing/qa/pages/page-###.png`
 - `publishing/qa/qa_summary.json`
 
-当 `--to-stage deep-review` 运行时，还会额外生成：
+当运行 `--to-stage deep-review` 时，还会额外生成：
 
 - `publishing/deep_review/findings.jsonl`
 - `publishing/deep_review/revised_chapters.jsonl`
@@ -186,40 +176,40 @@ book-translator qa-pdf --workspace ./out/book-name
 
 ### 通用翻译参数
 
-- `--input`：单文件或目录，目录会递归扫描
+- `--input`：单个文件或目录，目录会递归扫描
 - `--output`：输出根目录
 - `--provider`：`openai` 或 `gemini`
 - `--model`：覆盖默认模型
-- `--api-key-env`：覆盖默认 API Key 环境变量名
-- `--max-concurrency`：最大并发请求数
-- `--resume/--no-resume`：是否复用已成功的块结果
-- `--force`：删除目标书籍的旧状态并全量重跑
-- `--glossary`：JSON 术语映射文件
-- `--name-map`：JSON 专名映射文件
+- `--api-key-env`：覆盖 API Key 环境变量名
+- `--max-concurrency`：最大并发翻译请求数
+- `--resume/--no-resume`：尽可能复用已成功的块结果
+- `--force`：删除目标书籍的旧状态并重新开始
+- `--glossary`：术语映射 JSON 文件
+- `--name-map`：专名映射 JSON 文件
 - `--chapter-strategy`：`toc-first`、`auto`、`rule-only` 或 `manual`
-- `--manual-toc`：当 `--chapter-strategy manual` 时使用的 JSON 目录列表
-- `--chunk-size`：每个块的大致原文字数上限
-- `--render-pdf/--no-render-pdf`：是否在翻译后渲染精排 PDF
+- `--manual-toc`：在 `--chapter-strategy manual` 时使用的章节标题 JSON 列表
+- `--chunk-size`：每个块的大致最大英文单词数
+- `--render-pdf/--no-render-pdf`：翻译后是否输出精排 PDF
 
 ### 出版级专用参数
 
-- `--style`：出版风格配置，目前为 `non-fiction-publishing`
+- `--style`：出版风格配置，目前是 `non-fiction-publishing`
 - `--from-stage`：`draft`、`lexicon`、`revision`、`proofread`、`final-review` 或 `deep-review`
-- `--to-stage`：在某个出版阶段结束
+- `--to-stage`：在某个出版阶段后停止
 - `--also-pdf`：当主输出默认是 EPUB 时，额外输出 PDF
 - `--also-epub`：当主输出默认是 PDF 时，额外输出 EPUB
 - `--audit-depth`：`standard` 或 `consensus`
-- `--enable-cross-review/--no-cross-review`：启用或关闭审计/复核仲裁循环
-- `--image-policy`：当前支持 `extract-or-preserve-caption`
+- `--enable-cross-review/--no-cross-review`：是否启用审校/复核仲裁闭环
+- `--image-policy`：当前为 `extract-or-preserve-caption`
 
 出版阶段语义：
 
 - `draft`：整书初译
-- `lexicon`：生成全书术语、专名和决策文件
-- `revision`：基于术语表做章节修订
-- `proofread`：独立校对并输出校对说明
-- `final-review`：整书一致性检查并生成最终文本/PDF
-- `deep-review`：做原文对照验收，输出审计产物，并按指定输出格式重建最终文本/PDF/EPUB
+- `lexicon`：整书术语、专名和决策文件
+- `revision`：基于术语表的章节修订
+- `proofread`：独立校对并输出笔记
+- `final-review`：整书一致性检查并生成最终文本 / PDF / EPUB
+- `deep-review`：原文对照验收，输出审计结果和审计产物，然后按所选输出格式重建最终文本 / PDF / EPUB
 
 ## 验证
 
@@ -231,8 +221,8 @@ pytest -q
 ## 说明
 
 - 当前版本只支持文字版 PDF，不支持扫描版 PDF。
-- `engineering` 模式输出中文纯文本，以及可选的精排 PDF。
-- `publishing` 模式面向非虚构中文译本，并保留中间审校产物。
-- 默认开启 `resume`；如果想整本重跑，请使用 `--force`。
-- 出版级 `resume` 是分阶段的，可配合 `--from-stage` 和 `--to-stage` 精确重跑。
-- 精排 PDF 使用本机 Windows 中文字体生成，目标是适合阅读的书稿版式，而不是逐页复刻原版 PDF。
+- 工程化模式会输出中文纯文本，以及可选的精排 PDF。
+- 出版级模式面向非虚构、正式出版风格的中文，并保留中间编辑产物。
+- 默认启用 `resume`；如需从头重跑整本书，请使用 `--force`。
+- 出版级 `resume` 是分阶段的；可以用 `--from-stage` 和 `--to-stage` 精确重跑局部流程。
+- 精排 PDF 使用本机 Windows 中文字体，目标是接近书稿风格，而不是逐页复制源 PDF 的视觉设计。

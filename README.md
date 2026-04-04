@@ -1,15 +1,11 @@
-# book-translation-cli
+# Booksmith
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-Command-line tool for translating text-based PDF and EPUB books into Simplified Chinese, with both an engineering workflow for fast batch translation and a publishing workflow for source-aware review, structured repair, polished PDF output, and reflowable EPUB output.
-
-## Modes
+Booksmith is a command-line tool for translating text-based PDF and EPUB books into Simplified Chinese. It supports two workflows on one shared foundation:
 
 - `engineering`: accurate, resumable, cost-aware translation for bulk processing
 - `publishing`: quality-first non-fiction translation with staged revision, proofreading, final review, structured source audit, arbitration, and deep review
-
-The top-level command remains an alias to `engineering` for compatibility.
 
 ## GUI
 
@@ -20,8 +16,8 @@ Use the GUI when you want an interactive local app with engineering and publishi
 Launch the GUI with either command:
 
 ```bash
-book-translator-gui
-python -m book_translator.gui
+booksmith-gui
+python -m booksmith.gui
 ```
 
 ## Features
@@ -51,8 +47,8 @@ pip install -e .[dev]
 If the local Python interpreter is incompatible with dependencies:
 
 ```bash
-conda create -n book-translation-cli-py311 python=3.11
-conda activate book-translation-cli-py311
+conda create -n booksmith-py311 python=3.11
+conda activate booksmith-py311
 pip install -e .[dev]
 ```
 
@@ -68,19 +64,13 @@ Copy `.env.example` and set the relevant API key:
 ### Engineering mode
 
 ```bash
-book-translator engineering --input ./books --output ./out --provider gemini --resume
-```
-
-Compatibility alias:
-
-```bash
-book-translator --input ./books --output ./out --provider gemini --resume
+booksmith engineering --input ./books --output ./out --provider gemini --resume
 ```
 
 ### Publishing mode
 
 ```bash
-book-translator publishing --input ./books --output ./out --provider openai --model gpt-4o-mini
+booksmith publishing --input ./books --output ./out --provider openai --model gpt-4o-mini
 ```
 
 Default output follows the source format:
@@ -91,44 +81,44 @@ Default output follows the source format:
 Cross-format output is explicit:
 
 ```bash
-book-translator publishing --input ./books/book.pdf --output ./out --also-epub
-book-translator publishing --input ./books/book.epub --output ./out --also-pdf
+booksmith publishing --input ./books/book.pdf --output ./out --also-epub
+booksmith publishing --input ./books/book.epub --output ./out --also-pdf
 ```
 
 Resume only later editorial stages:
 
 ```bash
-book-translator publishing --input ./books --output ./out --from-stage revision --to-stage final-review
+booksmith publishing --input ./books --output ./out --from-stage revision --to-stage final-review
 ```
 
 Run the source-aware deep-review pass and rebuild the final deliverables:
 
 ```bash
-book-translator publishing --input ./books --output ./out --from-stage final-review --to-stage deep-review --render-pdf
+booksmith publishing --input ./books --output ./out --from-stage final-review --to-stage deep-review --render-pdf
 ```
 
 Stop after lexicon creation for inspection:
 
 ```bash
-book-translator publishing --input ./books --output ./out --to-stage lexicon
+booksmith publishing --input ./books --output ./out --to-stage lexicon
 ```
 
 Re-render a polished PDF from an existing workspace without calling the translation API again:
 
 ```bash
-book-translator render-pdf --workspace ./out/book-name
+booksmith render-pdf --workspace ./out/book-name
 ```
 
 Export specific PDF pages as PNG files:
 
 ```bash
-book-translator render-pages --pdf ./out/book-name/translated.pdf --output-dir ./tmp/pages --pages 1,3-5
+booksmith render-pages --pdf ./out/book-name/translated.pdf --output-dir ./tmp/pages --pages 1,3-5
 ```
 
 Generate a workspace-local visual QA snapshot set:
 
 ```bash
-book-translator qa-pdf --workspace ./out/book-name
+booksmith qa-pdf --workspace ./out/book-name
 ```
 
 If the engineering PDF is absent but `publishing/final/translated.pdf` exists, `qa-pdf` uses the publishing PDF and writes screenshots under `publishing/qa/`.
@@ -218,7 +208,7 @@ Publishing stage semantics:
 - `lexicon`: whole-book glossary, proper-name, and decision artifacts
 - `revision`: chapter-level revision against the lexicon
 - `proofread`: independent proofreading pass with notes
-- `final-review`: whole-book consistency pass plus final text/PDF output
+- `final-review`: whole-book consistency pass plus final text/PDF/EPUB output
 - `deep-review`: source-aware acceptance pass that emits findings, audit artifacts, and then rebuilds the final text/PDF/EPUB according to the selected outputs
 
 ## Validation

@@ -1,4 +1,4 @@
-# Design Notes
+# Booksmith Design Notes
 
 This repository implements two translation workflows on one shared foundation:
 
@@ -44,6 +44,7 @@ This repository implements two translation workflows on one shared foundation:
   - `final/final_chapters.jsonl`
   - `final/translated.txt`
   - `final/translated.pdf`
+  - `final/translated.epub`
   - `deep_review/findings.jsonl` when `--to-stage deep-review` runs
   - `deep_review/revised_chapters.jsonl` when `--to-stage deep-review` runs
   - `deep_review/decisions.json` when `--to-stage deep-review` runs
