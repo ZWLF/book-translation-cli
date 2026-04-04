@@ -28,8 +28,8 @@ from booksmith.output.title_enrichment import enrich_missing_titles
 from booksmith.state.workspace import Workspace
 
 app = typer.Typer(
-    name="book-translator",
-    help="Translate text-based PDF and EPUB books into Simplified Chinese.",
+    name="booksmith",
+    help="Booksmith translates text-based PDF and EPUB books into Simplified Chinese.",
     add_completion=False,
 )
 engineering_app = typer.Typer(help="Engineering workflows.")

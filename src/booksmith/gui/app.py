@@ -15,7 +15,7 @@ from .tasks import GuiEvent, GuiTaskRunner
 from .views import GuiShellViews, build_shell
 
 
-class BookTranslatorGui:
+class BooksmithGui:
     def __init__(
         self,
         *,
@@ -584,22 +584,22 @@ class BookTranslatorGui:
             "duration_seconds": 0.0,
         }
         for summary in summaries:
-            aggregate["successful_chunks"] += BookTranslatorGui._int_from_dict(
+            aggregate["successful_chunks"] += BooksmithGui._int_from_dict(
                 summary,
                 "successful_chunks",
                 0,
             )
-            aggregate["failed_chunks"] += BookTranslatorGui._int_from_dict(
+            aggregate["failed_chunks"] += BooksmithGui._int_from_dict(
                 summary,
                 "failed_chunks",
                 0,
             )
-            aggregate["estimated_cost_usd"] += BookTranslatorGui._float_from_dict(
+            aggregate["estimated_cost_usd"] += BooksmithGui._float_from_dict(
                 summary,
                 "estimated_cost_usd",
                 0.0,
             )
-            aggregate["duration_seconds"] += BookTranslatorGui._float_from_dict(
+            aggregate["duration_seconds"] += BooksmithGui._float_from_dict(
                 summary,
                 "duration_seconds",
                 0.0,
@@ -647,5 +647,5 @@ class BookTranslatorGui:
 
 
 def main() -> None:
-    app = BookTranslatorGui()
+    app = BooksmithGui()
     app.run()

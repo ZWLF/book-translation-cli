@@ -9,11 +9,11 @@ runner = CliRunner()
 
 
 def test_cli_shows_help() -> None:
-    result = runner.invoke(app, ["--help"], prog_name="book-translator")
+    result = runner.invoke(app, ["--help"], prog_name="booksmith")
 
     assert result.exit_code == 0
-    assert "book-translator" in result.stdout
-    assert "Translate text-based PDF and EPUB books" in result.stdout
+    assert "booksmith" in result.stdout
+    assert "Booksmith translates text-based PDF and EPUB books" in result.stdout
     assert "engineering" in result.stdout
     assert "publishing" in result.stdout
     assert "render-pdf" in result.stdout
@@ -22,7 +22,7 @@ def test_cli_shows_help() -> None:
 
 
 def test_publishing_command_shows_help() -> None:
-    result = runner.invoke(app, ["publishing"], prog_name="book-translator")
+    result = runner.invoke(app, ["publishing"], prog_name="booksmith")
 
     assert result.exit_code == 0
     assert "Publishing workflows" in result.stdout
@@ -66,7 +66,7 @@ def test_cli_empty_input_translates_to_bad_parameter_without_progress(
             "--output",
             str(output_path),
         ],
-        prog_name="book-translator",
+        prog_name="booksmith",
     )
 
     assert result.exit_code == 2

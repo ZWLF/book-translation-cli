@@ -28,7 +28,7 @@ class GuiShellViews:
 
 
 def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
-    root.title("Book Translator")
+    root.title("Booksmith")
     root.minsize(900, 720)
 
     root.columnconfigure(0, weight=1)
@@ -54,7 +54,7 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
     header.grid(row=0, column=0, sticky="ew")
     header.columnconfigure(0, weight=1)
 
-    ttk.Label(header, text="Book Translator", font=("TkDefaultFont", 18, "bold")).grid(
+    ttk.Label(header, text="Booksmith", font=("TkDefaultFont", 18, "bold")).grid(
         row=0,
         column=0,
         sticky="w",
