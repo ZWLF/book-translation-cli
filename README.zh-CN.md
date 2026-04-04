@@ -188,7 +188,7 @@ booksmith qa-pdf --workspace ./out/book-name
 - `--name-map`：专名映射 JSON 文件
 - `--chapter-strategy`：`toc-first`、`auto`、`rule-only` 或 `manual`
 - `--manual-toc`：在 `--chapter-strategy manual` 时使用的章节标题 JSON 列表
-- `--chunk-size`：每个块的大致最大英文单词数
+- `--chunk-size`：每个块的大致最大源文本词数
 - `--render-pdf/--no-render-pdf`：翻译后是否输出精排 PDF
 
 ### 出版级专用参数

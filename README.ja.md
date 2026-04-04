@@ -188,7 +188,7 @@ booksmith qa-pdf --workspace ./out/book-name
 - `--name-map`: 固有名詞対応 JSON
 - `--chapter-strategy`: `toc-first`、`auto`、`rule-only`、`manual`
 - `--manual-toc`: `--chapter-strategy manual` で使う JSON の章タイトル一覧
-- `--chunk-size`: 1 チャンクあたりのおおよその最大英単語数
+- `--chunk-size`: 1 チャンクあたりのおおよその最大ソーステキスト語数
 - `--render-pdf/--no-render-pdf`: 翻訳後に整形 PDF を生成するかどうか
 
 ### 出版専用オプション
