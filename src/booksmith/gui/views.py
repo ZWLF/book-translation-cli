@@ -215,23 +215,21 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
         text="Available in the next step.",
     ).grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
 
-    publishing_advanced_frame = ttk.Frame(publishing_frame)
-    publishing_advanced_frame.columnconfigure(1, weight=1)
-    ttk.Checkbutton(publishing_advanced_frame, text="Also export PDF", variable=also_pdf_var).grid(
-        row=0,
+    ttk.Checkbutton(publishing_body, text="Also export PDF", variable=also_pdf_var).grid(
+        row=2,
         column=0,
         sticky="w",
+        pady=(10, 0),
     )
-    ttk.Checkbutton(
-        publishing_advanced_frame,
-        text="Also export EPUB",
-        variable=also_epub_var,
-    ).grid(
-        row=0,
+    ttk.Checkbutton(publishing_body, text="Also export EPUB", variable=also_epub_var).grid(
+        row=2,
         column=1,
         sticky="w",
         padx=(16, 0),
+        pady=(10, 0),
     )
+
+    publishing_advanced_frame = ttk.Frame(publishing_frame)
 
     _add_section_heading(
         outer,
