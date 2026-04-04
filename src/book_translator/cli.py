@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Annotated
@@ -9,6 +10,11 @@ import typer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+from book_translator.app_services import (
+    BookDiscoveryError,
+    run_engineering_books_sync,
+    run_publishing_books_sync,
+)
 from book_translator.config import PublishingRunConfig, RunConfig
 from book_translator.output.pdf_raster import (
     choose_sample_pages,
@@ -19,8 +25,6 @@ from book_translator.output.pdf_raster import (
 )
 from book_translator.output.polished_pdf import build_printable_book, render_polished_pdf
 from book_translator.output.title_enrichment import enrich_missing_titles
-from book_translator.pipeline import discover_books, process_book
-from book_translator.publishing.pipeline import process_book_publishing
 from book_translator.state.workspace import Workspace
 
 app = typer.Typer(
@@ -100,7 +104,7 @@ def _engineering_command(
     ] = None,
     chunk_size: Annotated[int, typer.Option("--chunk-size", min=100)] = 3000,
     render_pdf: Annotated[bool, typer.Option("--render-pdf/--no-render-pdf")] = True,
-    ) -> None:
+) -> None:
     if ctx.invoked_subcommand is not None:
         return
     if input_path is None:
@@ -123,7 +127,16 @@ def _engineering_command(
         chunk_size=chunk_size,
         render_pdf=render_pdf,
     )
-    asyncio.run(_run_cli(input_path=input_path, output_path=output_path, config=config))
+    _run_books_with_cli_progress(
+        description="Processing books",
+        runner=lambda event_listener: run_engineering_books_sync(
+            input_path=input_path,
+            output_path=output_path,
+            config=config,
+            event_listener=event_listener,
+        ),
+        summary_formatter=_format_engineering_summary,
+    )
 
 
 app.callback(invoke_without_command=True)(_engineering_command)
@@ -205,7 +218,13 @@ def publishing(
         enable_cross_review=enable_cross_review,
         image_policy=image_policy,
     )
-    asyncio.run(_run_publishing_cli(input_path=input_path, output_path=output_path, config=config))
+    _run_async_sync(
+        _run_publishing_cli(
+            input_path=input_path,
+            output_path=output_path,
+            config=config,
+        )
+    )
 
 
 async def _run_publishing_cli(
@@ -213,32 +232,17 @@ async def _run_publishing_cli(
     input_path: Path,
     output_path: Path,
     config: PublishingRunConfig,
-) -> None:
-    books = discover_books(input_path)
-    if not books:
-        raise typer.BadParameter(f"No supported .pdf or .epub files found under {input_path}.")
-
-    output_path.mkdir(parents=True, exist_ok=True)
-    progress, task_id = _build_progress(
+) -> list[dict[str, object]]:
+    return _run_books_with_cli_progress(
         description="Processing publishing books",
-        total=len(books),
+        runner=lambda event_listener: run_publishing_books_sync(
+            input_path=input_path,
+            output_path=output_path,
+            config=config,
+            event_listener=event_listener,
+        ),
+        summary_formatter=_format_publishing_summary,
     )
-    with progress:
-        for book in books:
-            summary = await process_book_publishing(
-                input_path=book,
-                output_root=output_path,
-                config=config,
-            )
-            progress.advance(task_id)
-            console.print(
-                f"[green]{book.name}[/green] "
-                f"stage={summary['completed_stage']} "
-                f"chunks={summary['successful_chunks']}/{summary['total_chunks']} "
-                "failed="
-                f"{summary['failed_chunks']} "
-                f"cost~=${float(summary['estimated_cost_usd']):.6f}"
-            )
 
 
 def _resolve_qa_target(workspace: Workspace) -> tuple[Path, Path, Path]:
@@ -256,26 +260,73 @@ def _resolve_qa_target(workspace: Workspace) -> tuple[Path, Path, Path]:
     )
 
 
-async def _run_cli(*, input_path: Path, output_path: Path, config: RunConfig) -> None:
-    books = discover_books(input_path)
-    if not books:
-        raise typer.BadParameter(f"No supported .pdf or .epub files found under {input_path}.")
-
-    output_path.mkdir(parents=True, exist_ok=True)
-    progress, task_id = _build_progress(description="Processing books", total=len(books))
-    with progress:
-        for book in books:
-            summary = await process_book(input_path=book, output_root=output_path, config=config)
-            progress.advance(task_id)
-            console.print(
-                f"[green]{book.name}[/green] "
-                f"chunks={summary.successful_chunks}/{summary.total_chunks} "
-                f"failed={summary.failed_chunks} cost~=${summary.estimated_cost_usd:.6f}"
-            )
-
-
 def main() -> None:
     app()
+
+
+def _run_books_with_cli_progress(
+    *,
+    description: str,
+    runner: Callable[[Callable[[dict[str, object]], None] | None], list[dict[str, object]]],
+    summary_formatter: Callable[[str, dict[str, object]], str],
+) -> list[dict[str, object]]:
+    progress: Progress | None = None
+    task_id: int | None = None
+
+    def listener(event: dict[str, object]) -> None:
+        nonlocal progress, task_id
+        event_type = event["type"]
+        if event_type == "run_started":
+            progress, task_id = _build_progress(
+                description=description,
+                total=int(event["total_books"]),
+            )
+            progress.__enter__()
+            return
+        if event_type != "book_completed" or progress is None or task_id is None:
+            return
+        progress.advance(task_id)
+        book_name = str(event["book_name"])
+        summary = event["summary"]
+        if not isinstance(summary, dict):
+            raise TypeError(f"Expected dict summary, got {type(summary)!r}")
+        console.print(summary_formatter(book_name=book_name, summary=summary))
+
+    exc_info: tuple[type[BaseException] | None, BaseException | None, object | None] = (
+        None,
+        None,
+        None,
+    )
+    try:
+        return runner(listener)
+    except BookDiscoveryError as exc:
+        exc_info = (type(exc), exc, exc.__traceback__)
+        raise typer.BadParameter(str(exc)) from exc
+    except Exception as exc:
+        exc_info = (type(exc), exc, exc.__traceback__)
+        raise
+    finally:
+        if progress is not None:
+            progress.__exit__(*exc_info)
+
+
+def _format_engineering_summary(*, book_name: str, summary: dict[str, object]) -> str:
+    return (
+        f"[green]{book_name}[/green] "
+        f"chunks={int(summary['successful_chunks'])}/{int(summary['total_chunks'])} "
+        f"failed={int(summary['failed_chunks'])} "
+        f"cost~=${float(summary['estimated_cost_usd']):.6f}"
+    )
+
+
+def _format_publishing_summary(*, book_name: str, summary: dict[str, object]) -> str:
+    return (
+        f"[green]{book_name}[/green] "
+        f"stage={summary['completed_stage']} "
+        f"chunks={int(summary['successful_chunks'])}/{int(summary['total_chunks'])} "
+        f"failed={int(summary['failed_chunks'])} "
+        f"cost~=${float(summary['estimated_cost_usd']):.6f}"
+    )
 
 
 @app.command("render-pdf")
@@ -323,7 +374,7 @@ def render_pages_command(
         Path,
         typer.Option("--pdf", exists=True, file_okay=True, dir_okay=False),
     ],
-    output_dir: Annotated[Path, typer.Option("--output-dir")] ,
+    output_dir: Annotated[Path, typer.Option("--output-dir")],
     pages: Annotated[str | None, typer.Option("--pages")] = None,
     dpi: Annotated[int, typer.Option("--dpi", min=72)] = 144,
 ) -> None:
