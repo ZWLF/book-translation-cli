@@ -50,6 +50,10 @@ from book_translator.publishing.proofread import PROOFREAD_STAGE_VERSION, proofr
 from book_translator.publishing.release_gate import evaluate_release_gate
 from book_translator.publishing.revision import revise_chapter
 from book_translator.publishing.structure import build_structured_chapter
+from book_translator.publishing.validation import (
+    summarize_visual_blockers,
+    validate_primary_output,
+)
 from book_translator.state.workspace import Workspace
 from book_translator.translation.orchestrator import translate_chunks
 from book_translator.utils import file_fingerprint, slugify
@@ -727,7 +731,11 @@ async def _ensure_deep_review_stage(
         summary_metrics=summary_metrics,
         release_tier="candidate",
     )
-    gate_report = _evaluate_candidate_release_gate(final_report=result.final_report)
+    gate_report = _evaluate_candidate_release_gate(
+        workspace=workspace,
+        final_report=result.final_report,
+        selection=output_selection,
+    )
     workspace._write_publishing_json(
         workspace.publishing_final_gate_report_path,
         gate_report,
@@ -1095,22 +1103,54 @@ def _publishing_output_paths(*, workspace: Workspace, release_tier: str) -> tupl
     )
 
 
-def _evaluate_candidate_release_gate(*, final_report: dict[str, object]) -> dict[str, object]:
+def _evaluate_candidate_release_gate(
+    *,
+    workspace: Workspace,
+    final_report: dict[str, object],
+    selection,
+) -> dict[str, object]:
     unresolved_count = int(final_report.get("unresolved_count", 0))
     high_severity_count = int(final_report.get("high_severity_count", 0))
     structural_issue_count = int(final_report.get("structural_issue_count", 0))
     citation_issue_count = int(final_report.get("citation_issue_count", 0))
     image_or_caption_issue_count = int(final_report.get("image_or_caption_issue_count", 0))
-    visual_blocker_count = 0
+    primary_kind = selection.primary_output
+    primary_path = _publishing_output_path_for_kind(
+        workspace=workspace,
+        release_tier="candidate",
+        output_kind=primary_kind,
+    )
+    primary_validation = validate_primary_output(primary_path, primary_kind)
+
+    additional_validations = [
+        validate_primary_output(
+            _publishing_output_path_for_kind(
+                workspace=workspace,
+                release_tier="candidate",
+                output_kind=output_kind,
+            ),
+            output_kind,
+        )
+        for output_kind in selection.additional_outputs
+    ]
+    cross_output_validation = {
+        "passed": all(item["passed"] for item in additional_validations),
+        "outputs": additional_validations,
+    }
+    visual_summary = summarize_visual_blockers([])
+    visual_blocker_count = int(visual_summary["visual_blocker_count"])
     zero_issue_build = (
         unresolved_count == 0
         and high_severity_count == 0
         and structural_issue_count == 0
         and citation_issue_count == 0
         and image_or_caption_issue_count == 0
+        and bool(primary_validation["passed"])
+        and bool(cross_output_validation["passed"])
+        and visual_blocker_count == 0
     )
     score_floor = 9.2 if zero_issue_build else 8.4
-    return evaluate_release_gate(
+    gate_report = evaluate_release_gate(
         PublishingGateInputs(
             unresolved_count=unresolved_count,
             high_severity_count=high_severity_count,
@@ -1118,8 +1158,8 @@ def _evaluate_candidate_release_gate(*, final_report: dict[str, object]) -> dict
             citation_issue_count=citation_issue_count,
             image_or_caption_issue_count=image_or_caption_issue_count,
             visual_blocker_count=visual_blocker_count,
-            primary_output_validation_passed=True,
-            cross_output_validation_passed=True,
+            primary_output_validation_passed=bool(primary_validation["passed"]),
+            cross_output_validation_passed=bool(cross_output_validation["passed"]),
             fidelity_score=score_floor,
             structure_score=score_floor,
             terminology_score=score_floor,
@@ -1128,3 +1168,51 @@ def _evaluate_candidate_release_gate(*, final_report: dict[str, object]) -> dict
             epub_integrity_score=score_floor,
         )
     )
+    gate_report.update(
+        {
+            "unresolved_count": unresolved_count,
+            "high_severity_count": high_severity_count,
+            "structural_issue_count": structural_issue_count,
+            "citation_issue_count": citation_issue_count,
+            "image_or_caption_issue_count": image_or_caption_issue_count,
+            "visual_blocker_count": visual_blocker_count,
+            "primary_output_validation": primary_validation,
+            "cross_output_validation": cross_output_validation,
+            "visual_summary": visual_summary,
+            "rollback_level_required": _gate_rollback_level(final_report=final_report),
+        }
+    )
+    return gate_report
+
+
+def _publishing_output_path_for_kind(
+    *,
+    workspace: Workspace,
+    release_tier: str,
+    output_kind: str,
+) -> Path:
+    text_path, pdf_path, epub_path = _publishing_output_paths(
+        workspace=workspace,
+        release_tier=release_tier,
+    )
+    if output_kind == "pdf":
+        return pdf_path
+    if output_kind == "epub":
+        return epub_path
+    if output_kind == "txt":
+        return text_path
+    raise ValueError(f"Unsupported output kind: {output_kind}")
+
+
+def _gate_rollback_level(*, final_report: dict[str, object]) -> str:
+    unresolved_count = int(final_report.get("unresolved_count", 0))
+    high_severity_count = int(final_report.get("high_severity_count", 0))
+    if unresolved_count == 0:
+        return "none"
+    if high_severity_count > 0:
+        return "chapter_retranslate"
+    if unresolved_count <= 3:
+        return "chapter_repair"
+    if unresolved_count <= 8:
+        return "chapter_redraft"
+    return "book_retranslate"
