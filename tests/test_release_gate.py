@@ -59,6 +59,30 @@ def test_release_gate_passes_only_when_score_and_gate_both_pass() -> None:
     assert report["quality_score"] == quality_score
 
 
+def test_release_gate_accepts_exact_9_point_threshold() -> None:
+    inputs = PublishingGateInputs(
+        unresolved_count=0,
+        high_severity_count=0,
+        structural_issue_count=0,
+        citation_issue_count=0,
+        image_or_caption_issue_count=0,
+        visual_blocker_count=0,
+        primary_output_validation_passed=True,
+        cross_output_validation_passed=True,
+        fidelity_score=9.0,
+        structure_score=9.0,
+        terminology_score=9.0,
+        layout_score=9.0,
+        source_style_alignment_score=9.0,
+        epub_integrity_score=9.0,
+    )
+
+    report = evaluate_release_gate(inputs)
+
+    assert report["release_status"] == "passed"
+    assert report["quality_score"]["overall"] == 9.0
+
+
 def test_release_gate_fails_when_quality_score_is_below_threshold() -> None:
     inputs = PublishingGateInputs(
         unresolved_count=0,
