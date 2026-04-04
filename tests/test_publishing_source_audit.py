@@ -15,14 +15,22 @@ def test_audit_detects_collapsed_numbered_list() -> None:
         target_text="1. First idea. 2. Second idea. 3. Third idea.",
     )
 
-    assert _finding_types(findings) == ["collapsed_numbered_list"]
-    finding = findings[0]
-    assert finding.block_id is None
-    assert finding.severity == "high"
-    assert finding.confidence == 0.95
-    assert finding.agent_role == "audit"
-    assert finding.auto_fixable is True
-    assert finding.source_signature == "collapsed_numbered_list:1-2-3"
+    assert _finding_types(findings) == [
+        "collapsed_numbered_list",
+        "list_structure_loss",
+    ]
+    collapsed = findings[0]
+    assert collapsed.block_id is None
+    assert collapsed.severity == "high"
+    assert collapsed.confidence == 0.95
+    assert collapsed.agent_role == "audit"
+    assert collapsed.auto_fixable is True
+    assert collapsed.source_signature == "collapsed_numbered_list:1-2-3"
+    structure_loss = findings[1]
+    assert structure_loss.finding_type == "list_structure_loss"
+    assert structure_loss.severity == "high"
+    assert structure_loss.auto_fixable is True
+    assert structure_loss.source_signature == "list_structure_loss:1-2-3"
 
 
 def test_audit_detects_possible_omission_candidates() -> None:
@@ -112,8 +120,9 @@ def test_audit_does_not_misclassify_partially_preserved_block_list_as_collapsed(
         target_text="1. One.\n2. Two.\n3. Three.",
     )
 
-    assert _finding_types(findings) == ["possible_omission"]
-    assert findings[0].source_signature == "possible_omission:2:4-four-5-five"
+    assert _finding_types(findings) == ["list_structure_loss", "possible_omission"]
+    assert findings[0].source_signature == "list_structure_loss:1-2-3-4-5"
+    assert findings[1].source_signature == "possible_omission:2:4-four-5-five"
 
 
 def test_audit_populates_richer_finding_shape_for_non_autofixable_results() -> None:

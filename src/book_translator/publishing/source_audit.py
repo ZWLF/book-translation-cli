@@ -36,6 +36,13 @@ def audit_source_against_target(
         )
 
     findings.extend(
+        _detect_list_structure_loss(
+            chapter_id=chapter_id,
+            source_text=source_text,
+            target_text=target_text,
+        )
+    )
+    findings.extend(
         _detect_possible_omissions(
             chapter_id=chapter_id,
             source_text=source_text,
@@ -66,6 +73,35 @@ def _looks_like_collapsed_numbered_list(*, source_text: str, target_text: str) -
     if _has_numbered_block_run(target_text, min_run=3):
         return False
     return _has_inline_numbered_run(target_text, min_run=3)
+
+
+def _detect_list_structure_loss(
+    *,
+    chapter_id: str,
+    source_text: str,
+    target_text: str,
+) -> list[PublishingAuditFinding]:
+    source_items = _extract_numbered_block_items(source_text)
+    if not _has_sequential_run(source_items, min_run=3, require_start_at_one=True):
+        return []
+
+    target_items = _extract_numbered_block_items(target_text)
+    if source_items == target_items:
+        return []
+
+    return [
+        _build_audit_finding(
+            chapter_id=chapter_id,
+            finding_type="list_structure_loss",
+            severity="high",
+            source_excerpt=_excerpt(source_text),
+            target_excerpt=_excerpt(target_text),
+            reason="Ordered list cardinality or block structure drifted between source and target.",
+            auto_fixable=True,
+            confidence=0.9,
+            source_signature=_list_structure_loss_signature(source_text),
+        )
+    ]
 
 
 def _detect_possible_omissions(
@@ -224,6 +260,14 @@ def _collapsed_numbered_list_signature(source_text: str) -> str:
         return "collapsed_numbered_list:none"
     run = "-".join(str(item) for item in items[:5])
     return f"collapsed_numbered_list:{run}"
+
+
+def _list_structure_loss_signature(source_text: str) -> str:
+    items = _extract_numbered_block_items(source_text)
+    if not items:
+        return "list_structure_loss:none"
+    run = "-".join(str(item) for item in items[:5])
+    return f"list_structure_loss:{run}"
 
 
 def _possible_omission_signature(missing_units: list[str]) -> str:
