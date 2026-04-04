@@ -87,6 +87,50 @@ def test_structure_builder_splits_inline_numbered_items_into_ordered_blocks() ->
     ]
 
 
+def test_structure_builder_splits_ordered_item_from_trailing_reference_entries() -> None:
+    chapter = build_structured_chapter(
+        artifact=PublishingChapterArtifact(
+            chapter_id="c1d",
+            chapter_index=5,
+            title="Sequenced Strategy",
+            text=(
+                "1. Build a sports car.\n"
+                "2. Use the money to build an affordable car.\n"
+                "3. Use the money to build an even more affordable car. "
+                "508 Musk, \"The Secret Tesla Motors Master Plan.\" "
+                "509 Musk, \"The Secret Tesla Motors Master Plan (just between you and me).\""
+            ),
+        ),
+        source_text=(
+            "1. Build a sports car.\n"
+            "2. Use the money to build an affordable car.\n"
+            "3. Use the money to build an even more affordable car."
+        ),
+        source_assets=[],
+    )
+
+    assert [block.kind for block in chapter.blocks] == [
+        "ordered_item",
+        "ordered_item",
+        "ordered_item",
+        "reference_entry",
+        "reference_entry",
+    ]
+    assert [block.text for block in chapter.blocks] == [
+        "Build a sports car.",
+        "Use the money to build an affordable car.",
+        "Use the money to build an even more affordable car.",
+        '508 Musk, "The Secret Tesla Motors Master Plan."',
+        '509 Musk, "The Secret Tesla Motors Master Plan (just between you and me)."',
+    ]
+    assert [block.source_anchor for block in chapter.blocks[:3]] == [
+        "1. Build a sports car.",
+        "2. Use the money to build an affordable car.",
+        "3. Use the money to build an even more affordable car.",
+    ]
+    assert all(block.source_anchor is None for block in chapter.blocks[3:])
+
+
 def test_structure_builder_preserves_caption_only_asset_anchor() -> None:
     chapter = build_structured_chapter(
         artifact=PublishingChapterArtifact(

@@ -10,6 +10,7 @@ _STRUCTURED_LINE_RE = re.compile(
     r"^\s*(?:\d{1,3}[.)]|[-*]|\u2022|(?:q|question|a|answer|\u95ee|\u7b54)\s*[:\uff1a])\s+\S",
     re.IGNORECASE,
 )
+_REFERENCE_LINE_RE = re.compile(r"^\s*\d{2,4}\s+\S")
 
 
 def audit_source_against_target(
@@ -17,6 +18,7 @@ def audit_source_against_target(
     chapter_id: str,
     source_text: str,
     target_text: str,
+    source_title: str | None = None,
 ) -> list[PublishingAuditFinding]:
     findings: list[PublishingAuditFinding] = []
 
@@ -36,10 +38,18 @@ def audit_source_against_target(
         )
 
     findings.extend(
+        _detect_list_structure_loss(
+            chapter_id=chapter_id,
+            source_text=source_text,
+            target_text=target_text,
+        )
+    )
+    findings.extend(
         _detect_possible_omissions(
             chapter_id=chapter_id,
             source_text=source_text,
             target_text=target_text,
+            source_title=source_title,
         )
     )
     findings.extend(
@@ -61,11 +71,40 @@ def audit_source_against_target(
 
 def _looks_like_collapsed_numbered_list(*, source_text: str, target_text: str) -> bool:
     source_items = _extract_numbered_block_items(source_text)
-    if not _has_sequential_run(source_items, min_run=3, require_start_at_one=True):
+    if not _has_sequential_run(source_items, min_run=3, require_start_at_one=False):
         return False
     if _has_numbered_block_run(target_text, min_run=3):
         return False
     return _has_inline_numbered_run(target_text, min_run=3)
+
+
+def _detect_list_structure_loss(
+    *,
+    chapter_id: str,
+    source_text: str,
+    target_text: str,
+) -> list[PublishingAuditFinding]:
+    source_items = _extract_numbered_block_items(source_text)
+    if not _has_sequential_run(source_items, min_run=3, require_start_at_one=False):
+        return []
+
+    target_items = _extract_numbered_block_items(target_text)
+    if source_items == target_items:
+        return []
+
+    return [
+        _build_audit_finding(
+            chapter_id=chapter_id,
+            finding_type="list_structure_loss",
+            severity="high",
+            source_excerpt=_excerpt(source_text),
+            target_excerpt=_excerpt(target_text),
+            reason="Ordered list cardinality or block structure drifted between source and target.",
+            auto_fixable=True,
+            confidence=0.9,
+            source_signature=_list_structure_loss_signature(source_text),
+        )
+    ]
 
 
 def _detect_possible_omissions(
@@ -73,20 +112,34 @@ def _detect_possible_omissions(
     chapter_id: str,
     source_text: str,
     target_text: str,
+    source_title: str | None = None,
 ) -> list[PublishingAuditFinding]:
     if _looks_like_collapsed_numbered_list(source_text=source_text, target_text=target_text):
         return []
+
+    source_units = _trim_non_body_tail_units(
+        _extract_structural_units(source_text, source_title=source_title)
+    )
+    target_units = _trim_non_body_tail_units(_extract_structural_units(target_text))
 
     source_sentence_count = _sentence_count(source_text)
     target_sentence_count = _sentence_count(target_text)
     if source_sentence_count >= 3 and target_sentence_count >= source_sentence_count:
         return []
 
-    source_units = _extract_structural_units(source_text)
-    target_units = _extract_structural_units(target_text)
-
     if len(source_units) < 3:
         return []
+
+    if _should_relax_cross_language_omission(
+        source_text=source_text,
+        target_text=target_text,
+        source_units=source_units,
+        target_units=target_units,
+        source_sentence_count=source_sentence_count,
+        target_sentence_count=target_sentence_count,
+    ):
+        return []
+
     if len(target_units) >= len(source_units):
         return []
 
@@ -95,6 +148,8 @@ def _detect_possible_omissions(
         return []
 
     missing_units = source_units[-missing_count:]
+    if _missing_units_already_present_in_target(missing_units, target_text):
+        return []
     return [
         _build_audit_finding(
             chapter_id=chapter_id,
@@ -226,6 +281,14 @@ def _collapsed_numbered_list_signature(source_text: str) -> str:
     return f"collapsed_numbered_list:{run}"
 
 
+def _list_structure_loss_signature(source_text: str) -> str:
+    items = _extract_numbered_block_items(source_text)
+    if not items:
+        return "list_structure_loss:none"
+    run = "-".join(str(item) for item in items[:5])
+    return f"list_structure_loss:{run}"
+
+
 def _possible_omission_signature(missing_units: list[str]) -> str:
     normalized_units = [_signature_token(unit) for unit in missing_units if _signature_token(unit)]
     joined = "-".join(normalized_units[:3]) or "none"
@@ -246,14 +309,14 @@ def _has_numbered_block_run(text: str, *, min_run: int) -> bool:
     return _has_sequential_run(
         _extract_numbered_block_items(text),
         min_run=min_run,
-        require_start_at_one=True,
+        require_start_at_one=False,
     )
 
 
 def _has_inline_numbered_run(text: str, *, min_run: int) -> bool:
     for line in text.splitlines():
         markers = [int(match.group(1)) for match in _NUMBERED_MARKER_RE.finditer(line)]
-        if _has_sequential_run(markers, min_run=min_run, require_start_at_one=True):
+        if _has_sequential_run(markers, min_run=min_run, require_start_at_one=False):
             return True
     return False
 
@@ -282,7 +345,70 @@ def _has_sequential_run(
     return False
 
 
-def _extract_structural_units(text: str) -> list[str]:
+def _should_relax_cross_language_omission(
+    *,
+    source_text: str,
+    target_text: str,
+    source_units: list[str],
+    target_units: list[str],
+    source_sentence_count: int,
+    target_sentence_count: int,
+) -> bool:
+    if len(source_units) < 3 or len(target_units) < 2:
+        return False
+    shared_numeric_anchors = _shared_numeric_anchor_count(source_text, target_text)
+    if _looks_like_cross_language_prose_pair(source_text, target_text):
+        if len(target_units) * 2 >= len(source_units):
+            return True
+
+        if source_sentence_count >= 3 and target_sentence_count >= 2 and len(source_units) <= 6:
+            return True
+
+        if (
+            shared_numeric_anchors >= 3
+            and target_sentence_count >= max(4, int(source_sentence_count * 0.08))
+        ):
+            return True
+
+        if (
+            source_sentence_count >= 8
+            and len(target_units) >= 8
+            and target_sentence_count >= max(12, int(source_sentence_count * 0.2))
+        ):
+            return True
+
+    if (
+        shared_numeric_anchors >= 6
+        and target_sentence_count >= max(12, int(source_sentence_count * 0.6))
+        and len(target_units) >= max(8, int(len(source_units) * 0.75))
+    ):
+        return True
+
+    return False
+
+
+def _looks_like_cross_language_prose_pair(source_text: str, target_text: str) -> bool:
+    source_latin = _latin_letter_count(source_text)
+    source_cjk = _cjk_character_count(source_text)
+    target_latin = _latin_letter_count(target_text)
+    target_cjk = _cjk_character_count(target_text)
+    return source_latin >= max(12, source_cjk * 2) and target_cjk >= max(8, target_latin * 2)
+
+
+def _latin_letter_count(text: str) -> int:
+    return len(re.findall(r"[A-Za-z]", text))
+
+
+def _cjk_character_count(text: str) -> int:
+    return len(re.findall(r"[\u4e00-\u9fff]", text))
+
+
+def _normalize_unit(text: str) -> str:
+    compact = re.sub(r"\s+", " ", text).strip().lower()
+    return re.sub(r"[.!?,;:\u3002\uff01\uff1f\uff0c\uff1b\uff1a\"'()\[\]{}<>《》]", "", compact)
+
+
+def _extract_structural_units(text: str, source_title: str | None = None) -> list[str]:
     normalized = text.replace("\r\n", "\n").strip()
     if not normalized:
         return []
@@ -309,6 +435,52 @@ def _extract_structural_units(text: str) -> list[str]:
             units.extend(sentence_candidates)
         else:
             units.append(compact)
+
+    return _strip_leading_title_unit(units, source_title)
+
+
+def _trim_non_body_tail_units(units: list[str]) -> list[str]:
+    trimmed = list(units)
+    while trimmed and (
+        _looks_like_reference_tail_unit(trimmed[-1]) or _looks_like_boundary_heading(trimmed[-1])
+    ):
+        trimmed.pop()
+    return trimmed
+
+
+def _looks_like_reference_tail_unit(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not re.match(r"^\d{2,4}\s+\S", compact):
+        return False
+    if re.search(r"https?://|www\.", compact, re.I):
+        return True
+    if re.search(r'["“”]', compact):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:podcast|summit|conference|speech|interview|blog|transcript|episode|plan)\b",
+            compact,
+            re.I,
+        )
+    )
+
+
+def _looks_like_boundary_heading(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    return bool(re.match(r"^(?:part|chapter)\s+[ivxlcdm0-9]+$", compact, re.I))
+
+
+def _strip_leading_title_unit(units: list[str], source_title: str | None) -> list[str]:
+    if not source_title or not units:
+        return units
+
+    source_title_normalized = _normalize_unit(source_title)
+    if not source_title_normalized:
+        return units
+
+    if _normalize_unit(units[0]) == source_title_normalized:
+        return units[1:]
+
     return units
 
 
@@ -316,7 +488,26 @@ def _looks_like_structured_line_block(text: str) -> bool:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if len(lines) < 3:
         return False
-    return all(_STRUCTURED_LINE_RE.match(line) for line in lines)
+    if all(_STRUCTURED_LINE_RE.match(line) for line in lines):
+        return True
+    return all(_looks_like_reference_line(line) for line in lines)
+
+
+def _looks_like_reference_line(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not _REFERENCE_LINE_RE.match(compact):
+        return False
+    if re.search(r"https?://|www\.", compact, re.I):
+        return True
+    if re.search(r'["“”]', compact):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:podcast|summit|conference|speech|interview|blog|transcript|episode|plan)\b",
+            compact,
+            re.I,
+        )
+    )
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -351,6 +542,28 @@ def _count_qa_markers(text: str, *, marker_kind: str) -> int:
     else:
         pattern = r"(?mi)^\s*(?:a|answer|\u7b54)\s*[:\uff1a]"
     return len(re.findall(pattern, text))
+
+
+def _shared_numeric_anchor_count(source_text: str, target_text: str) -> int:
+    source_markers = set(re.findall(r"(?<!\d)(\d{2,4})(?!\d)", source_text))
+    target_markers = set(re.findall(r"(?<!\d)(\d{2,4})(?!\d)", target_text))
+    return len(source_markers & target_markers)
+
+
+def _missing_units_already_present_in_target(missing_units: list[str], target_text: str) -> bool:
+    normalized_target = _normalize_unit(target_text)
+    checked_units = 0
+    matched_units = 0
+    for unit in missing_units:
+        fragment = _normalize_unit(unit)
+        if len(fragment) < 6:
+            continue
+        checked_units += 1
+        if fragment in normalized_target:
+            matched_units += 1
+    if checked_units == 0:
+        return False
+    return matched_units / checked_units >= 0.8
 
 
 def _excerpt(text: str, *, max_len: int = 180) -> str:

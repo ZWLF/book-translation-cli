@@ -35,6 +35,7 @@ class DeepReviewResult:
     findings: list[PublishingAuditFinding]
     review_findings: list[PublishingAuditFinding]
     arbiter_findings: list[PublishingAuditFinding]
+    release_blocking_findings: list[PublishingAuditFinding]
     revised_chapters: list[PublishingChapterArtifact]
     structured_book: StructuredPublishingBook
     consensus: PublishingFindingConsensusResult
@@ -64,6 +65,7 @@ def run_deep_review(
     annotation_count = 0
     revised_count = 0
     confirmation_findings: list[PublishingAuditFinding] = []
+    release_blocking_findings: list[PublishingAuditFinding] = []
     use_consensus_review = audit_depth == "consensus" and enable_cross_review
 
     for artifact in sorted(final_artifacts, key=lambda item: item.chapter_index):
@@ -82,6 +84,7 @@ def run_deep_review(
                 agent_role="audit",
             )
             source_findings.append(missing_source_finding)
+            release_blocking_findings.append(missing_source_finding)
             structured_chapter = _build_passthrough_structured_chapter(artifact)
             structured_chapters.append(structured_chapter)
             final_text = assemble_structured_chapter_text(structured_chapter)
@@ -91,10 +94,16 @@ def run_deep_review(
                 {
                     "chapter_id": artifact.chapter_id,
                     "chapter_index": artifact.chapter_index,
-                    "source_finding_count": 0,
+                    "source_anchor": artifact.chapter_id,
+                    "audit_finding_count": 1,
+                    "source_finding_count": 1,
                     "review_finding_count": 0,
+                    "agreed_count": 0,
                     "disputed_count": 0,
+                    "repaired_count": 0,
                     "confirmation_finding_count": 1,
+                    "unresolved_count": 1,
+                    "rollback_level_required": "book_retranslate",
                     "revised": False,
                     "annotations": [],
                     "status": "missing_source_chapter",
@@ -106,6 +115,7 @@ def run_deep_review(
             chapter_id=artifact.chapter_id,
             source_text=source_chapter.text,
             target_text=artifact.text,
+            source_title=source_chapter.title,
         )
         source_findings.extend(chapter_source_findings)
 
@@ -122,6 +132,7 @@ def run_deep_review(
                 chapter_id=artifact.chapter_id,
                 source_text=source_chapter.text,
                 target_text=structured_chapter_body,
+                source_title=source_chapter.title,
             )
         else:
             chapter_review_findings = []
@@ -136,6 +147,7 @@ def run_deep_review(
                 chapter_id=artifact.chapter_id,
                 source_text=source_chapter.text,
                 target_text=structured_chapter_body,
+                source_title=source_chapter.title,
                 consensus=consensus,
             )
             arbiter_findings.extend(chapter_arbiter_findings)
@@ -161,8 +173,10 @@ def run_deep_review(
             chapter_id=artifact.chapter_id,
             source_text=source_chapter.text,
             target_text=final_text,
+            source_title=source_chapter.title,
         )
         confirmation_findings.extend(chapter_confirmation_findings)
+        release_blocking_findings.extend(chapter_confirmation_findings)
 
         chapter_was_revised = final_text != artifact.text
         if chapter_was_revised:
@@ -174,6 +188,11 @@ def run_deep_review(
             findings=repair_candidates or chapter_source_findings,
         )
         annotation_count += len(annotations)
+        chapter_unresolved_count = len(chapter_confirmation_findings)
+        rollback_level_required = _classify_rollback_level(
+            unresolved_count=chapter_unresolved_count,
+            findings=chapter_confirmation_findings,
+        )
 
         structured_chapters.append(structured_chapter)
         revised_chapters.append(artifact.model_copy(update={"text": final_text}))
@@ -181,13 +200,19 @@ def run_deep_review(
             {
                 "chapter_id": artifact.chapter_id,
                 "chapter_index": artifact.chapter_index,
+                "source_anchor": source_chapter.chapter_id,
+                "audit_finding_count": len(chapter_source_findings),
                 "source_finding_count": len(chapter_source_findings),
                 "review_finding_count": len(chapter_review_findings),
+                "agreed_count": len(consensus.agreed),
                 "disputed_count": len(consensus.disputed),
-                "confirmation_finding_count": len(chapter_confirmation_findings),
+                "repaired_count": len(repair_candidates),
+                "confirmation_finding_count": chapter_unresolved_count,
+                "unresolved_count": chapter_unresolved_count,
+                "rollback_level_required": rollback_level_required,
                 "revised": chapter_was_revised,
                 "annotations": [annotation.model_dump() for annotation in annotations],
-                "status": "reviewed",
+                "status": "reviewed" if chapter_unresolved_count == 0 else "rollback_required",
             }
         )
 
@@ -207,6 +232,20 @@ def run_deep_review(
         for finding in source_findings
         if finding.finding_type == "missing_source_chapter"
     )
+    high_severity_count = sum(
+        1 for finding in release_blocking_findings if finding.severity == "high"
+    )
+    structural_issue_count = sum(
+        1 for finding in release_blocking_findings if _is_structural_finding(finding)
+    )
+    citation_issue_count = sum(
+        1 for finding in release_blocking_findings if _is_citation_finding(finding)
+    )
+    image_or_caption_issue_count = sum(
+        1
+        for finding in release_blocking_findings
+        if _is_image_or_caption_finding(finding)
+    )
     final_report = {
         "stage": "deep-review",
         "stage_version": DEEP_REVIEW_STAGE_VERSION,
@@ -221,7 +260,12 @@ def run_deep_review(
         "repair_passes": 1,
         "confirmation_passes": 1,
         "confirmation_finding_count": len(confirmation_findings),
-        "unresolved_count": len(confirmation_findings) + missing_source_count,
+        "unresolved_count": len(release_blocking_findings),
+        "missing_source_count": missing_source_count,
+        "high_severity_count": high_severity_count,
+        "structural_issue_count": structural_issue_count,
+        "citation_issue_count": citation_issue_count,
+        "image_or_caption_issue_count": image_or_caption_issue_count,
         "revised_chapter_count": revised_count,
         "annotation_count": annotation_count,
     }
@@ -236,6 +280,7 @@ def run_deep_review(
             "low_confidence_count": len(consensus.low_confidence),
         },
         "confirmation_finding_count": len(confirmation_findings),
+        "release_blocking_finding_count": len(release_blocking_findings),
         "final_report": final_report,
         "chapters": chapter_decisions,
     }
@@ -243,6 +288,7 @@ def run_deep_review(
         findings=source_findings,
         review_findings=review_findings,
         arbiter_findings=arbiter_findings,
+        release_blocking_findings=release_blocking_findings,
         revised_chapters=revised_chapters,
         structured_book=structured_book,
         consensus=consensus,
@@ -259,6 +305,7 @@ def _run_arbiter_review(
     chapter_id: str,
     source_text: str,
     target_text: str,
+    source_title: str | None,
     consensus: PublishingFindingConsensusResult,
 ) -> list[PublishingAuditFinding]:
     disputed_items = build_arbitration_queue(consensus.disputed)
@@ -269,6 +316,7 @@ def _run_arbiter_review(
         chapter_id=chapter_id,
         source_text=source_text,
         target_text=target_text,
+        source_title=source_title,
     )
     findings: list[PublishingAuditFinding] = []
     for candidate in arbiter_candidates:
@@ -328,6 +376,43 @@ def _arbiter_fallback_decision(item: object) -> PublishingAuditFinding | None:
     if audit_finding is not None and audit_finding.auto_fixable:
         return audit_finding
     return None
+
+
+def _classify_rollback_level(
+    *,
+    unresolved_count: int,
+    findings: list[PublishingAuditFinding],
+) -> str:
+    if unresolved_count == 0:
+        return "none"
+    if any(
+        finding.finding_type in {"possible_omission", "missing_caption", "missing_image"}
+        for finding in findings
+    ):
+        return "chapter_redraft" if unresolved_count <= 8 else "chapter_retranslate"
+    if any(finding.severity == "high" and not finding.auto_fixable for finding in findings):
+        return "chapter_redraft" if unresolved_count <= 8 else "chapter_retranslate"
+    if unresolved_count <= 3:
+        return "chapter_repair"
+    if unresolved_count <= 8:
+        return "chapter_redraft"
+    return "chapter_retranslate"
+
+
+def _is_structural_finding(finding: PublishingAuditFinding) -> bool:
+    return finding.finding_type in {
+        "list_structure_loss",
+        "question_answer_structure",
+        "missing_source_chapter",
+    } or "structure" in finding.finding_type
+
+
+def _is_citation_finding(finding: PublishingAuditFinding) -> bool:
+    return "citation" in finding.finding_type
+
+
+def _is_image_or_caption_finding(finding: PublishingAuditFinding) -> bool:
+    return finding.finding_type in {"missing_image", "missing_caption", "image_anchor_loss"}
 
 
 def _build_passthrough_structured_chapter(

@@ -259,6 +259,67 @@ def test_run_deep_review_builds_structured_book_and_audit_report() -> None:
     assert "2. 第二条原则。" in result.revised_chapters[0].text
 
 
+    chapter_gate = result.decisions["chapters"][0]
+    assert chapter_gate["audit_finding_count"] >= 1
+    assert chapter_gate["unresolved_count"] >= 0
+    assert chapter_gate["rollback_level_required"] in {
+        "none",
+        "chapter_repair",
+        "chapter_redraft",
+        "chapter_retranslate",
+    }
+
+
+def test_run_deep_review_forwards_source_title_to_source_audit(monkeypatch) -> None:
+    seen_titles: list[str | None] = []
+
+    def fake_audit_source_against_target(
+        *,
+        chapter_id: str,
+        source_text: str,
+        target_text: str,
+        source_title: str | None = None,
+    ) -> list[PublishingAuditFinding]:
+        seen_titles.append(source_title)
+        return []
+
+    monkeypatch.setattr(
+        "book_translator.publishing.deep_review.audit_source_against_target",
+        fake_audit_source_against_target,
+    )
+
+    source_chapters = [
+        Chapter(
+            chapter_id="chapter-1",
+            chapter_index=0,
+            title="Create more than you consume.",
+            text=(
+                "Create more than you consume.\n\n"
+                "Build things.\n"
+                "Serve people."
+            ),
+        )
+    ]
+    final_artifacts = [
+        PublishingChapterArtifact(
+            chapter_id="chapter-1",
+            chapter_index=0,
+            title="Create more than you consume.",
+            text=(
+                "创造的多于消费。\n\n"
+                "打造产品。\n"
+                "服务他人。"
+            ),
+        )
+    ]
+
+    result = run_deep_review(source_chapters=source_chapters, final_artifacts=final_artifacts)
+
+    assert seen_titles
+    assert seen_titles == ["Create more than you consume."] * len(seen_titles)
+    assert result.final_report["source_finding_count"] == 0
+
+
 def test_assemble_structured_publishing_output_text_preserves_ordered_items() -> None:
     book = StructuredPublishingBook(
         title="Sample Book",
@@ -346,6 +407,8 @@ def test_run_deep_review_flags_missing_source_chapter() -> None:
     assert result.findings
     assert result.findings[0].finding_type == "missing_source_chapter"
     assert result.final_report["unresolved_count"] >= 1
+    assert result.final_report["high_severity_count"] >= 1
+    assert result.decisions["chapters"][0]["rollback_level_required"] == "book_retranslate"
 
 
 def test_run_deep_review_standard_mode_skips_review_findings() -> None:
@@ -397,6 +460,56 @@ def test_run_deep_review_disables_cross_review_when_requested() -> None:
 
     assert result.review_findings == []
     assert result.final_report["cross_review_enabled"] is False
+
+
+def test_deep_review_assigns_chapter_redraft_when_confirmation_findings_remain() -> None:
+    result = run_deep_review(
+        source_chapters=[
+            Chapter(
+                chapter_id="c1",
+                chapter_index=0,
+                title="Chapter 1",
+                text="Alpha.\nBeta.\nGamma.\nDelta.\nEpsilon.",
+            )
+        ],
+        final_artifacts=[
+            PublishingChapterArtifact(
+                chapter_id="c1",
+                chapter_index=0,
+                title="Chapter 1",
+                text="Alpha.",
+            )
+        ],
+        enable_cross_review=True,
+    )
+
+    chapter = result.decisions["chapters"][0]
+
+    assert chapter["unresolved_count"] > 0
+    assert chapter["rollback_level_required"] in {"chapter_redraft", "chapter_retranslate"}
+
+
+def test_deep_review_counts_structure_findings_separately() -> None:
+    result = run_deep_review(
+        source_chapters=[
+            Chapter(
+                chapter_id="c-struct",
+                chapter_index=0,
+                title="Chapter 1",
+                text="1. Alpha.\n2. Beta.\n3. Gamma.",
+            )
+        ],
+        final_artifacts=[
+            PublishingChapterArtifact(
+                chapter_id="c-struct",
+                chapter_index=0,
+                title="Chapter 1",
+                text="Alpha Beta Gamma",
+            )
+        ],
+    )
+
+    assert result.final_report["structural_issue_count"] >= 1
 
 
 def test_assemble_structured_publishing_output_text_keeps_qa_blocks_tight() -> None:

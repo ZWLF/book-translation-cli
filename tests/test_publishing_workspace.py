@@ -49,9 +49,7 @@ def test_publishing_workspace_exposes_artifact_paths(tmp_path: Path) -> None:
     assert workspace.publishing_assets_manifest_path == (
         workspace.publishing_assets_dir / "manifest.json"
     )
-    assert workspace.publishing_assets_images_dir == (
-        workspace.publishing_assets_dir / "images"
-    )
+    assert workspace.publishing_assets_images_dir == (workspace.publishing_assets_dir / "images")
 
     artifact = PublishingChapterArtifact(
         chapter_id="chapter-1",
@@ -198,6 +196,99 @@ def test_publishing_workspace_clears_deep_review_stage_outputs(tmp_path: Path) -
     assert workspace.publishing_final_text_path.read_text(encoding="utf-8") == "final text"
     assert workspace.publishing_final_pdf_path.read_text(encoding="utf-8") == "final pdf"
     assert workspace.read_publishing_stage_state("deep-review") is None
+
+
+def test_publishing_workspace_clears_final_review_stage_outputs(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "book")
+
+    workspace.publishing_final_chapters_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.publishing_final_chapters_path.write_text("{}", encoding="utf-8")
+    workspace.publishing_editorial_log_path.write_text("{}", encoding="utf-8")
+    workspace.publishing_candidate_final_text_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.publishing_candidate_final_text_path.write_text("candidate text", encoding="utf-8")
+    workspace.publishing_candidate_final_pdf_path.write_text("candidate pdf", encoding="utf-8")
+    workspace.publishing_candidate_final_epub_path.write_text("candidate epub", encoding="utf-8")
+
+    workspace.write_publishing_stage_state(
+        "final-review",
+        {
+            "fingerprint": "abc123",
+            "status": "complete",
+        },
+    )
+
+    workspace.clear_publishing_stage_outputs("final-review")
+
+    assert not workspace.publishing_final_chapters_path.exists()
+    assert not workspace.publishing_editorial_log_path.exists()
+    assert not workspace.publishing_candidate_final_text_path.exists()
+    assert not workspace.publishing_candidate_final_pdf_path.exists()
+    assert not workspace.publishing_candidate_final_epub_path.exists()
+    assert workspace.read_publishing_stage_state("final-review") is None
+
+
+def test_publishing_workspace_reads_legacy_stage_state_paths(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "book")
+    legacy_state_path = workspace.publishing_state_dir / "deep-review.json"
+    legacy_state_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_state_path.write_text(
+        PublishingStageState(
+            stage="deep-review",
+            fingerprint="legacy-fingerprint",
+            status="complete",
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    loaded = workspace.read_publishing_stage_state("deep-review")
+
+    assert loaded == PublishingStageState(
+        stage="deep-review",
+        fingerprint="legacy-fingerprint",
+        status="complete",
+    )
+
+
+def test_publishing_workspace_clears_legacy_stage_state_paths(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path / "book")
+
+    for stage in ("final-review", "deep-review"):
+        legacy_state_path = workspace.publishing_state_dir / f"{stage}.json"
+        legacy_state_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_state_path.write_text(
+            PublishingStageState(
+                stage=stage,
+                fingerprint=f"legacy-{stage}",
+                status="complete",
+            ).model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+
+        workspace.clear_publishing_stage_outputs(stage)
+
+        assert workspace.read_publishing_stage_state(stage) is None
+        assert not legacy_state_path.exists()
+
+
+def test_publishing_workspace_promote_candidate_release_removes_missing_outputs(
+    tmp_path: Path,
+) -> None:
+    workspace = Workspace(tmp_path / "book")
+
+    workspace.publishing_candidate_final_text_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.publishing_candidate_final_text_path.write_text("candidate text", encoding="utf-8")
+    workspace.publishing_candidate_final_pdf_path.write_text("candidate pdf", encoding="utf-8")
+
+    workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.publishing_final_text_path.write_text("old text", encoding="utf-8")
+    workspace.publishing_final_pdf_path.write_text("old pdf", encoding="utf-8")
+    workspace.publishing_final_epub_path.write_text("old epub", encoding="utf-8")
+
+    workspace.promote_candidate_release()
+
+    assert workspace.publishing_final_text_path.read_text(encoding="utf-8") == "candidate text"
+    assert workspace.publishing_final_pdf_path.read_text(encoding="utf-8") == "candidate pdf"
+    assert not workspace.publishing_final_epub_path.exists()
 
 
 def test_publishing_deep_review_model_defaults() -> None:
