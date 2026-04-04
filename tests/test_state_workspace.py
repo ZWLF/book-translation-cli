@@ -121,9 +121,18 @@ def test_workspace_exposes_candidate_and_final_paths(tmp_path: Path) -> None:
         workspace.publishing_candidate_final_epub_path
         == workspace.publishing_candidate_final_dir / "translated.epub"
     )
-    assert workspace.publishing_final_text_path == workspace.publishing_root_path / "final" / "translated.txt"
-    assert workspace.publishing_final_pdf_path == workspace.publishing_root_path / "final" / "translated.pdf"
-    assert workspace.publishing_final_epub_path == workspace.publishing_root_path / "final" / "translated.epub"
+    assert (
+        workspace.publishing_final_text_path
+        == workspace.publishing_root_path / "final" / "translated.txt"
+    )
+    assert (
+        workspace.publishing_final_pdf_path
+        == workspace.publishing_root_path / "final" / "translated.pdf"
+    )
+    assert (
+        workspace.publishing_final_epub_path
+        == workspace.publishing_root_path / "final" / "translated.epub"
+    )
 
 
 def test_failed_candidate_build_does_not_require_final_cleanup(tmp_path: Path) -> None:

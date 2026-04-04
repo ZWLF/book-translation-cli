@@ -49,9 +49,7 @@ def test_publishing_workspace_exposes_artifact_paths(tmp_path: Path) -> None:
     assert workspace.publishing_assets_manifest_path == (
         workspace.publishing_assets_dir / "manifest.json"
     )
-    assert workspace.publishing_assets_images_dir == (
-        workspace.publishing_assets_dir / "images"
-    )
+    assert workspace.publishing_assets_images_dir == (workspace.publishing_assets_dir / "images")
 
     artifact = PublishingChapterArtifact(
         chapter_id="chapter-1",
@@ -272,7 +270,9 @@ def test_publishing_workspace_clears_legacy_stage_state_paths(tmp_path: Path) ->
         assert not legacy_state_path.exists()
 
 
-def test_publishing_workspace_promote_candidate_release_removes_missing_outputs(tmp_path: Path) -> None:
+def test_publishing_workspace_promote_candidate_release_removes_missing_outputs(
+    tmp_path: Path,
+) -> None:
     workspace = Workspace(tmp_path / "book")
 
     workspace.publishing_candidate_final_text_path.parent.mkdir(parents=True, exist_ok=True)
