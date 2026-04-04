@@ -35,6 +35,7 @@ class DeepReviewResult:
     findings: list[PublishingAuditFinding]
     review_findings: list[PublishingAuditFinding]
     arbiter_findings: list[PublishingAuditFinding]
+    release_blocking_findings: list[PublishingAuditFinding]
     revised_chapters: list[PublishingChapterArtifact]
     structured_book: StructuredPublishingBook
     consensus: PublishingFindingConsensusResult
@@ -283,6 +284,7 @@ def run_deep_review(
         findings=source_findings,
         review_findings=review_findings,
         arbiter_findings=arbiter_findings,
+        release_blocking_findings=release_blocking_findings,
         revised_chapters=revised_chapters,
         structured_book=structured_book,
         consensus=consensus,

@@ -231,9 +231,10 @@ async def test_process_book_publishing_writes_stage_artifacts(tmp_path: Path) ->
     assert (book_dir / "draft" / "draft.txt").exists()
     assert (book_dir / "draft" / "chapters.jsonl").exists()
     assert (book_dir / "lexicon" / "glossary.json").exists()
-    assert (book_dir / "final" / "translated.txt").exists()
-    assert (book_dir / "final" / "translated.epub").exists()
-    assert not (book_dir / "final" / "translated.pdf").exists()
+    assert (book_dir / "candidate" / "final" / "translated.txt").exists()
+    assert (book_dir / "candidate" / "final" / "translated.epub").exists()
+    assert not (book_dir / "candidate" / "final" / "translated.pdf").exists()
+    assert not (book_dir / "final" / "translated.txt").exists()
     assert (book_dir / "editorial_log.json").exists()
     assert summary["mode"] == "publishing"
     assert summary["render_pdf"] is False
@@ -957,3 +958,76 @@ async def test_promote_candidate_release_copies_candidate_final_outputs(tmp_path
     assert workspace.publishing_final_text_path.read_text(encoding="utf-8") == "candidate text"
     assert workspace.publishing_final_pdf_path.read_bytes() == b"candidate pdf"
     assert workspace.publishing_final_epub_path.read_bytes() == b"candidate epub"
+
+
+@pytest.mark.asyncio
+async def test_failed_gate_keeps_existing_final_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    input_path = tmp_path / "sample.epub"
+    _build_sample_epub(input_path)
+
+    from book_translator.state.workspace import Workspace
+
+    workspace = Workspace(tmp_path / "out" / "sample")
+    workspace.publishing_final_text_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.publishing_final_text_path.write_text("approved release", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.evaluate_release_gate",
+        lambda inputs: {
+            "release_status": "failed",
+            "promotion_performed": False,
+            "quality_score": {"overall": 8.4},
+        },
+    )
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            to_stage="deep-review",
+            render_pdf=False,
+        ),
+        provider=FakeProvider(),
+    )
+
+    assert workspace.publishing_final_text_path.read_text(encoding="utf-8") == "approved release"
+    assert workspace.publishing_candidate_final_text_path.exists()
+    assert workspace.publishing_final_gate_report_path.exists()
+    assert workspace.publishing_unresolved_findings_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_passing_gate_promotes_candidate_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    input_path = tmp_path / "sample.epub"
+    _build_sample_epub(input_path)
+
+    monkeypatch.setattr(
+        "book_translator.publishing.pipeline.evaluate_release_gate",
+        lambda inputs: {
+            "release_status": "passed",
+            "promotion_performed": True,
+            "quality_score": {"overall": 9.2},
+        },
+    )
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            to_stage="deep-review",
+            render_pdf=False,
+        ),
+        provider=FakeProvider(),
+    )
+
+    workspace_dir = tmp_path / "out" / "sample" / "publishing"
+    candidate_text = (workspace_dir / "candidate" / "final" / "translated.txt").read_text(
+        encoding="utf-8"
+    )
+    final_text = (workspace_dir / "final" / "translated.txt").read_text(encoding="utf-8")
+
+    assert final_text == candidate_text

@@ -85,6 +85,13 @@ class Workspace:
         self.publishing_audit_review_path = self.publishing_audit_dir / "review_audit.jsonl"
         self.publishing_audit_consensus_path = self.publishing_audit_dir / "consensus.json"
         self.publishing_audit_report_path = self.publishing_audit_dir / "final_audit_report.json"
+        self.publishing_final_gate_report_path = (
+            self.publishing_audit_dir / "final_gate_report.json"
+        )
+        self.publishing_quality_score_path = self.publishing_audit_dir / "quality_score.json"
+        self.publishing_unresolved_findings_path = (
+            self.publishing_audit_dir / "unresolved_findings.jsonl"
+        )
         self.publishing_assets_manifest_path = self.publishing_assets_dir / "manifest.json"
         self.publishing_assets_images_dir = self.publishing_assets_dir / "images"
 
@@ -245,6 +252,9 @@ class Workspace:
                 self.publishing_audit_review_path,
                 self.publishing_audit_consensus_path,
                 self.publishing_audit_report_path,
+                self.publishing_final_gate_report_path,
+                self.publishing_quality_score_path,
+                self.publishing_unresolved_findings_path,
                 self.publishing_candidate_final_text_path,
                 self.publishing_candidate_final_pdf_path,
                 self.publishing_candidate_final_epub_path,
