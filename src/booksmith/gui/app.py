@@ -28,6 +28,7 @@ class BooksmithGui:
         self.mode_var = tk.StringVar(master=self.root, value="engineering")
         self.views: GuiShellViews = build_shell(self.root, mode_var=self.mode_var)
         self.publishing_frame = self.views.publishing_frame
+        self.publishing_advanced_frame = self.views.publishing_advanced_frame
         self.status_var = self.views.status_var
         self.stage_var = self.views.stage_var
         self.summary_var = self.views.summary_var
@@ -55,6 +56,7 @@ class BooksmithGui:
 
         self.mode_var.trace_add("write", self._on_mode_changed)
         self.views.run_button.configure(command=self._start_run)
+        self.views.publishing_toggle_button.configure(command=self._toggle_publishing_advanced)
         self.sync_mode_panels()
         self._sync_state_widgets()
         self._refresh_result_actions()
@@ -67,10 +69,24 @@ class BooksmithGui:
             self.publishing_frame.grid()
         else:
             self.publishing_frame.grid_remove()
+        self._sync_publishing_advanced_visibility()
         self.root.update_idletasks()
 
     def _on_mode_changed(self, *_args: object) -> None:
         self.sync_mode_panels()
+
+    def _toggle_publishing_advanced(self) -> None:
+        expanded = not self.views.publishing_expanded_var.get()
+        self.views.publishing_expanded_var.set(expanded)
+        self._sync_publishing_advanced_visibility()
+        self.root.update_idletasks()
+
+    def _sync_publishing_advanced_visibility(self) -> None:
+        if self.mode_var.get() != "publishing" or not self.views.publishing_expanded_var.get():
+            self.publishing_advanced_frame.grid_remove()
+            return
+
+        self.publishing_advanced_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
     def _collect_form_state(self) -> GuiFormState:
         return GuiFormState(
@@ -307,23 +323,27 @@ class BooksmithGui:
         if self.run_state.status == "failed":
             return self.run_state.message or "Run failed"
 
-        parts: list[str] = []
+        progress = ""
         if self.run_state.total_books:
-            parts.append(f"{self.run_state.completed_books}/{self.run_state.total_books} books")
+            progress = f"{self.run_state.completed_books}/{self.run_state.total_books} books"
+
+        metric_parts: list[str] = []
         if self.run_state.successful_chunks or self.run_state.failed_chunks:
-            parts.append(
-                f"{self.run_state.successful_chunks} successful chunks, "
-                f"{self.run_state.failed_chunks} failed"
+            metric_parts.append(
+                f"{self.run_state.successful_chunks} ok, {self.run_state.failed_chunks} failed"
             )
         if self.run_state.estimated_cost_usd:
-            parts.append(f"${self.run_state.estimated_cost_usd:.2f} estimated cost")
+            metric_parts.append(f"${self.run_state.estimated_cost_usd:.2f}")
         if self.run_state.elapsed_seconds:
-            parts.append(f"{self.run_state.elapsed_seconds:.1f}s elapsed")
-        if self.run_state.message and self.run_state.message not in parts:
-            parts.append(self.run_state.message)
-        if not parts:
-            return "Ready"
-        return " | ".join(parts)
+            metric_parts.append(f"{self.run_state.elapsed_seconds:.1f}s")
+        if metric_parts:
+            return " | ".join([progress, *metric_parts] if progress else metric_parts)
+
+        if self.run_state.message:
+            parts = [progress, self.run_state.message] if progress else [self.run_state.message]
+            return " | ".join(part for part in parts if part)
+
+        return progress or "Ready"
 
     def _apply_summary_metrics(self, summary: dict[str, object]) -> None:
         self.run_state.successful_chunks = self._int_from_dict(

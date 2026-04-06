@@ -4,6 +4,7 @@ import tkinter as tk
 import tomllib
 from pathlib import Path
 from queue import Queue
+from tkinter import ttk
 
 import pytest
 
@@ -20,6 +21,32 @@ def _create_gui(**kwargs: object) -> BooksmithGui:
     except tk.TclError as exc:
         pytest.skip(f"Tk unavailable in this environment: {exc}")
     return BooksmithGui(root=root, **kwargs)
+
+
+def _managed_widget_texts(parent: tk.Misc, widget_type: type[tk.Widget]) -> list[str]:
+    texts: list[str] = []
+    for child in parent.winfo_children():
+        if isinstance(child, widget_type) and child.winfo_manager():
+            texts.append(str(child.cget("text")))
+        texts.extend(_managed_widget_texts(child, widget_type))
+    return texts
+
+
+def _visible_widget_texts(parent: tk.Misc, widget_type: type[tk.Widget]) -> list[str]:
+    texts: list[str] = []
+    for child in parent.winfo_children():
+        if isinstance(child, widget_type) and child.winfo_manager() and child.winfo_ismapped():
+            texts.append(str(child.cget("text")))
+        texts.extend(_visible_widget_texts(child, widget_type))
+    return texts
+
+
+def _visible_result_action_keys(app: BooksmithGui) -> set[str]:
+    return {
+        key
+        for key, button in app.views.result_buttons.items()
+        if button.winfo_manager()
+    }
 
 
 class _FakeTaskRunner:
@@ -80,6 +107,60 @@ def test_gui_app_bootstraps_without_mainloop() -> None:
         app.root.destroy()
 
 
+def test_gui_exposes_publishing_view_refs_for_polished_layout() -> None:
+    app = _create_gui()
+    try:
+        assert type(app.views.publishing_frame) is ttk.Frame
+        assert isinstance(app.views.publishing_advanced_frame, ttk.Frame)
+        assert isinstance(app.views.publishing_expanded_var, tk.BooleanVar)
+        assert app.views.publishing_expanded_var.get() is False
+        assert isinstance(app.views.publishing_toggle_button, ttk.Button)
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+    finally:
+        app.root.destroy()
+
+
+def test_gui_shows_bilingual_shell_sections_in_order() -> None:
+    app = _create_gui()
+    try:
+        label_texts = _managed_widget_texts(app.root, ttk.Label)
+        ordered_labels = [
+            "书匠",
+            "Booksmith",
+            "工作区",
+            "Workspace",
+            "输出与选项",
+            "Output & options",
+            "运行状态",
+            "Run status",
+            "结果",
+            "Results",
+            "日志",
+            "Logs",
+        ]
+
+        indices = [label_texts.index(label) for label in ordered_labels]
+        assert indices == sorted(indices)
+    finally:
+        app.root.destroy()
+
+
+def test_gui_defaults_to_collapsed_publishing_advanced_area() -> None:
+    app = _create_gui()
+    try:
+        app.mode_var.set("publishing")
+        app.sync_mode_panels()
+        app.root.update()
+
+        assert app.views.publishing_expanded_var.get() is False
+        assert app.views.publishing_frame.winfo_manager() == "grid"
+        assert app.views.publishing_toggle_button.winfo_manager() == "grid"
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+        assert set(_visible_widget_texts(app.publishing_frame, ttk.Checkbutton)) == set()
+    finally:
+        app.root.destroy()
+
+
 def test_gui_app_accepts_real_task_runner_injection() -> None:
     queue: Queue[dict[str, object]] = Queue()
     runner = GuiTaskRunner(event_queue=queue)
@@ -97,13 +178,48 @@ def test_gui_publishing_panel_visibility_tracks_mode() -> None:
     try:
         app.mode_var.set("publishing")
         app.sync_mode_panels()
-        app.root.update_idletasks()
+        app.root.update()
         assert app.publishing_frame.winfo_manager() == "grid"
+        assert app.views.publishing_toggle_button.winfo_manager() == "grid"
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+        assert set(_visible_widget_texts(app.publishing_frame, ttk.Checkbutton)) == set()
 
         app.mode_var.set("engineering")
         app.sync_mode_panels()
-        app.root.update_idletasks()
+        app.root.update()
         assert app.publishing_frame.winfo_manager() == ""
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+    finally:
+        app.root.destroy()
+
+
+def test_gui_expands_publishing_advanced_options_on_toggle() -> None:
+    app = _create_gui()
+    try:
+        app.mode_var.set("publishing")
+        app.sync_mode_panels()
+        app.root.update()
+
+        assert not app.views.publishing_toggle_button.instate(["disabled"])
+        assert app.views.publishing_expanded_var.get() is False
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+
+        app._toggle_publishing_advanced()
+        app.root.update()
+
+        assert app.views.publishing_expanded_var.get() is True
+        assert app.views.publishing_advanced_frame.winfo_manager() == "grid"
+        assert set(_visible_widget_texts(app.views.publishing_advanced_frame, ttk.Checkbutton)) == {
+            "Also export PDF",
+            "Also export EPUB",
+        }
+
+        app.mode_var.set("engineering")
+        app.sync_mode_panels()
+        app.root.update()
+
+        assert app.publishing_frame.winfo_manager() == ""
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
     finally:
         app.root.destroy()
 
@@ -128,6 +244,7 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         app._start_run()
         assert app.event_queue is runner.event_queue
         assert len(runner.started_requests) == 1
+        assert _visible_result_action_keys(app) == set()
 
         runner.event_queue.put(
             {
@@ -154,6 +271,7 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         assert app.run_state.progress_fraction == 0.5
         assert app.status_var.get() == "Running"
         assert app.result_state.output_paths == ()
+        assert _visible_result_action_keys(app) == set()
 
         runner.event_queue.put(
             {
@@ -194,7 +312,7 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         assert request.input_path == input_path
         assert request.output_path == output_path
         assert app.status_var.get() == "Completed"
-        assert "3 successful chunks" in app.summary_var.get()
+        assert app.summary_var.get() == "2/2 books | 3 ok, 1 failed | $1.25 | 12.5s"
         assert app.run_state.successful_chunks == 3
         assert app.run_state.failed_chunks == 1
         assert app.run_state.estimated_cost_usd == 1.25
@@ -206,10 +324,12 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
             workspace_root / "translated.txt",
             workspace_root / "translated.pdf",
         )
-        assert app.views.result_buttons["open_output_folder"].winfo_manager() == "grid"
-        assert app.views.result_buttons["open_run_summary"].winfo_manager() == "grid"
-        assert app.views.result_buttons["open_translated_txt"].winfo_manager() == "grid"
-        assert app.views.result_buttons["open_translated_pdf"].winfo_manager() == "grid"
+        assert _visible_result_action_keys(app) == {
+            "open_output_folder",
+            "open_run_summary",
+            "open_translated_txt",
+            "open_translated_pdf",
+        }
     finally:
         app.root.destroy()
 
@@ -566,7 +686,7 @@ def test_gui_run_completed_aggregates_multi_book_summaries(tmp_path: Path) -> No
         assert app.run_state.failed_chunks == 3
         assert app.run_state.estimated_cost_usd == 3.25
         assert app.run_state.elapsed_seconds == 20.0
-        assert "13 successful chunks" in app.summary_var.get()
+        assert app.summary_var.get() == "2/2 books | 13 ok, 3 failed | $3.25 | 20.0s"
         assert app.views.result_buttons["open_output_folder"].winfo_manager() == "grid"
     finally:
         app.root.destroy()
