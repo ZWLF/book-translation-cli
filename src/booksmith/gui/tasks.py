@@ -5,11 +5,6 @@ from queue import Queue
 from threading import Thread
 from typing import Any
 
-from booksmith.app_services import (
-    run_engineering_books_sync,
-    run_publishing_books_sync,
-)
-
 from .state import GuiRuntimeRequest
 
 GuiEvent = dict[str, object]
@@ -21,8 +16,8 @@ class GuiTaskRunner:
         self,
         *,
         event_queue: Queue[GuiEvent],
-        run_engineering_fn: RunnerFn = run_engineering_books_sync,
-        run_publishing_fn: RunnerFn = run_publishing_books_sync,
+        run_engineering_fn: RunnerFn | None = None,
+        run_publishing_fn: RunnerFn | None = None,
     ) -> None:
         self._event_queue = event_queue
         self._run_engineering_fn = run_engineering_fn
@@ -82,9 +77,23 @@ class GuiTaskRunner:
 
     def _runner_for_mode(self, mode: str) -> RunnerFn:
         if mode == "engineering":
-            return self._run_engineering_fn
+            if self._run_engineering_fn is None:
+                from booksmith.app_services import run_engineering_books_sync
+
+                self._run_engineering_fn = run_engineering_books_sync
+            runner = self._run_engineering_fn
+            if runner is None:
+                raise RuntimeError("engineering runner failed to initialize")
+            return runner
         if mode == "publishing":
-            return self._run_publishing_fn
+            if self._run_publishing_fn is None:
+                from booksmith.app_services import run_publishing_books_sync
+
+                self._run_publishing_fn = run_publishing_books_sync
+            runner = self._run_publishing_fn
+            if runner is None:
+                raise RuntimeError("publishing runner failed to initialize")
+            return runner
         raise ValueError(f"unsupported GUI runtime mode: {mode}")
 
     def _emit_run_completed(

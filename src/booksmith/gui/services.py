@@ -12,7 +12,6 @@ from booksmith.config import (
     RunConfig,
     resolve_publishing_outputs,
 )
-from booksmith.pipeline import discover_books
 from booksmith.utils import slugify
 
 from .state import (
@@ -177,7 +176,11 @@ def _source_kind(input_path: Path) -> str:
 def _discover_books_for_input(input_path: Path) -> tuple[Path, ...]:
     if input_path.is_file():
         return (input_path,)
-    return tuple(discover_books(input_path))
+    discovered: list[Path] = []
+    for path in input_path.rglob("*"):
+        if path.suffix.lower() in SUPPORTED_SOURCE_SUFFIXES:
+            discovered.append(path)
+    return tuple(sorted(discovered))
 
 
 def _engineering_primary_output(book_path: Path, render_pdf: bool) -> str:

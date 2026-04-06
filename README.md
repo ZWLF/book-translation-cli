@@ -20,6 +20,31 @@ booksmith-gui
 python -m booksmith.gui
 ```
 
+On Windows, you can also double-click one of these launchers from the repo root:
+
+- `Booksmith-GUI.cmd` (standard launcher)
+- `Booksmith-GUI.vbs` (silent launcher, no console window)
+
+To build a standalone Windows GUI app (fast startup, recommended):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-gui-exe.ps1
+```
+
+Output:
+
+- `dist\Booksmith-GUI\Booksmith-GUI.exe`
+
+Optional single-file build (slower startup, but one executable file):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-gui-exe.ps1 -OneFile
+```
+
+Output:
+
+- `dist\Booksmith-GUI.exe`
+
 ## Features
 
 - Extract text from text-based PDF and EPUB files
