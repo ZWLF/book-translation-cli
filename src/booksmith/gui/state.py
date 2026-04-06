@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from booksmith.config import PublishingRunConfig, RunConfig
+if TYPE_CHECKING:
+    from booksmith.config import PublishingRunConfig, RunConfig
 
 RunMode = Literal["engineering", "publishing"]
 SourceKind = Literal["file", "directory"]

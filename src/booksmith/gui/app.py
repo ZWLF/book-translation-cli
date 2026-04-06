@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
 from queue import Empty, Queue
 
-from booksmith.state.workspace import Workspace
-from booksmith.utils import slugify
-
-from .services import build_runtime_request
 from .state import GuiFormState, GuiResultState, GuiRunState, GuiRuntimeRequest
 from .tasks import GuiEvent, GuiTaskRunner
 from .views import GuiShellViews, build_shell
@@ -21,7 +18,7 @@ class BooksmithGui:
         *,
         root: tk.Tk | None = None,
         task_runner: GuiTaskRunner | None = None,
-        request_builder: Callable[[GuiFormState], GuiRuntimeRequest] = build_runtime_request,
+        request_builder: Callable[[GuiFormState], GuiRuntimeRequest] | None = None,
         open_path: Callable[[Path], None] | None = None,
     ) -> None:
         self.root = root or tk.Tk()
@@ -40,7 +37,7 @@ class BooksmithGui:
         self.run_state = GuiRunState()
         self.result_state = GuiResultState()
         self.current_request: GuiRuntimeRequest | None = None
-        self._request_builder = request_builder
+        self._request_builder = request_builder or self._default_request_builder
         self._open_path_handler = open_path or self._default_open_path
         self._queue_poll_after_id: str | None = None
 
@@ -573,13 +570,27 @@ class BooksmithGui:
         except ValueError:
             return self.result_state.output_paths[0].parent
 
-    def _workspace_for_current_request(self) -> Workspace | None:
+    def _workspace_for_current_request(self):
         if self.current_request is None:
             return None
         if len(self.current_request.discovered_books) == 1:
+            from booksmith.state.workspace import Workspace
+
             book = self.current_request.discovered_books[0]
-            return Workspace(self.current_request.output_path / slugify(book.stem))
+            return Workspace(self.current_request.output_path / self._slugify(book.stem))
         return None
+
+    @staticmethod
+    def _default_request_builder(form: GuiFormState) -> GuiRuntimeRequest:
+        from .services import build_runtime_request
+
+        return build_runtime_request(form)
+
+    @staticmethod
+    def _slugify(value: str) -> str:
+        slug = re.sub(r"[^\w\-]+", "-", value.strip().lower())
+        slug = re.sub(r"-{2,}", "-", slug).strip("-")
+        return slug or "book"
 
     def _requested_output_kinds(self) -> set[str]:
         if self.current_request is None:

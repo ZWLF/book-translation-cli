@@ -20,6 +20,11 @@ booksmith-gui
 python -m booksmith.gui
 ```
 
+Notes:
+
+- `booksmith-gui` is available after installing the project (`pip install -e .`).
+- `python -m booksmith.gui` works from the repository without script installation.
+
 On Windows, you can also double-click one of these launchers from the repo root:
 
 - `Booksmith-GUI.cmd` (standard launcher)
@@ -34,6 +39,8 @@ powershell -ExecutionPolicy Bypass -File .\build-gui-exe.ps1
 Output:
 
 - `dist\Booksmith-GUI\Booksmith-GUI.exe`
+
+Startup note: the default `onedir` build is optimized for launch speed. In local measurements it reaches idle in roughly `0.3s - 0.5s` after warm-up.
 
 Optional single-file build (slower startup, but one executable file):
 
