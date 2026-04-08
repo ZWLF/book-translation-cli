@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from pydantic import ValidationError
 
 from booksmith.app_services import (
     BookDiscoveryError,
@@ -16,6 +17,10 @@ from booksmith.app_services import (
     run_publishing_books_sync,
 )
 from booksmith.config import PublishingRunConfig, RunConfig
+from booksmith.provider_catalog import (
+    get_default_provider_option,
+    list_enabled_provider_options,
+)
 from booksmith.output.pdf_raster import (
     choose_sample_pages,
     parse_page_spec,
@@ -38,6 +43,9 @@ app.add_typer(engineering_app, name="engineering")
 app.add_typer(publishing_app, name="publishing")
 console = Console()
 DEFAULT_OUTPUT_PATH = Path("out")
+
+_ENABLED_PROVIDER_OPTIONS = tuple(list_enabled_provider_options())
+_SUPPORTED_PROVIDER_IDS = ", ".join(option.provider_id for option in _ENABLED_PROVIDER_OPTIONS)
 
 
 def _supports_spinner(target_console: Console) -> bool:
@@ -66,6 +74,113 @@ def _build_progress(*, description: str, total: int) -> tuple[Progress, int]:
     return progress, task_id
 
 
+def _input_help_text() -> str:
+    return "source file or directory scan root."
+
+
+def _output_help_text() -> str:
+    return "workspace root directory for generated artifacts and exports."
+
+
+def _provider_help_text() -> str:
+    default_provider = get_default_provider_option()
+    return (
+        f"Provider id from the shared catalog ({_SUPPORTED_PROVIDER_IDS}). "
+        f"Default: {default_provider.provider_id}."
+    )
+
+
+def _model_help_text() -> str:
+    return "Optional model override. Must match the selected provider catalog."
+
+
+def _api_key_env_help_text() -> str:
+    defaults = ", ".join(
+        f"{option.provider_id}={option.api_key_env}" for option in _ENABLED_PROVIDER_OPTIONS
+    )
+    return (
+        "Environment variable name for the provider API key. "
+        f"Defaults follow the provider catalog ({defaults})."
+    )
+
+
+def _build_run_config(
+    *,
+    config_type: type[RunConfig] | type[PublishingRunConfig],
+    provider: str,
+    model: str | None,
+    api_key_env: str | None,
+    **config_kwargs: object,
+) -> RunConfig | PublishingRunConfig:
+    try:
+        return config_type(
+            provider=provider,
+            model=model,
+            api_key_env=api_key_env,
+            **config_kwargs,
+        )
+    except ValidationError as exc:
+        raise typer.BadParameter(_validation_error_message(exc)) from exc
+
+
+def _validation_error_message(exc: ValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return "Invalid configuration."
+    message = str(errors[0].get("msg", "Invalid configuration."))
+    prefix = "Value error, "
+    if message.startswith(prefix):
+        return message[len(prefix) :]
+    return message
+
+
+def _print_help_and_exit(ctx: typer.Context, *, use_console: bool) -> None:
+    if ctx.resilient_parsing:
+        return
+    if use_console:
+        console.print(ctx.get_help())
+    else:
+        typer.echo(ctx.get_help())
+    raise typer.Exit(code=0)
+
+
+def _run_cli_callback(
+    *,
+    ctx: typer.Context,
+    input_path: Path | None,
+    output_path: Path,
+    provider: str,
+    model: str | None,
+    api_key_env: str | None,
+    config_type: type[RunConfig] | type[PublishingRunConfig],
+    config_kwargs: dict[str, object],
+    description: str,
+    runner: Callable[
+        [RunConfig | PublishingRunConfig, Callable[[dict[str, object]], None] | None],
+        list[dict[str, object]],
+    ],
+    summary_formatter: Callable[[str, dict[str, object]], str],
+    use_console_for_help: bool,
+) -> list[dict[str, object]] | None:
+    if ctx.invoked_subcommand is not None:
+        return None
+    if input_path is None:
+        _print_help_and_exit(ctx, use_console=use_console_for_help)
+
+    config = _build_run_config(
+        config_type=config_type,
+        provider=provider,
+        model=model,
+        api_key_env=api_key_env,
+        **config_kwargs,
+    )
+    return _run_books_with_cli_progress(
+        description=description,
+        runner=lambda event_listener: runner(config, event_listener),
+        summary_formatter=summary_formatter,
+    )
+
+
 def _run_async_sync(awaitable):
     try:
         asyncio.get_running_loop()
@@ -80,12 +195,30 @@ def _engineering_command(
     ctx: typer.Context,
     input_path: Annotated[
         Path | None,
-        typer.Option("--input", exists=True, file_okay=True, dir_okay=True),
+        typer.Option(
+            "--input",
+            exists=True,
+            file_okay=True,
+            dir_okay=True,
+            help=_input_help_text(),
+        ),
     ] = None,
-    output_path: Annotated[Path, typer.Option("--output")] = DEFAULT_OUTPUT_PATH,
-    provider: Annotated[str, typer.Option("--provider")] = "openai",
-    model: Annotated[str | None, typer.Option("--model")] = None,
-    api_key_env: Annotated[str | None, typer.Option("--api-key-env")] = None,
+    output_path: Annotated[
+        Path,
+        typer.Option("--output", help=_output_help_text()),
+    ] = DEFAULT_OUTPUT_PATH,
+    provider: Annotated[
+        str,
+        typer.Option("--provider", help=_provider_help_text()),
+    ] = get_default_provider_option().provider_id,
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help=_model_help_text()),
+    ] = None,
+    api_key_env: Annotated[
+        str | None,
+        typer.Option("--api-key-env", help=_api_key_env_help_text()),
+    ] = None,
     max_concurrency: Annotated[int, typer.Option("--max-concurrency", min=1)] = 5,
     resume: Annotated[bool, typer.Option("--resume/--no-resume")] = True,
     force: Annotated[bool, typer.Option("--force")] = False,
@@ -105,37 +238,34 @@ def _engineering_command(
     chunk_size: Annotated[int, typer.Option("--chunk-size", min=100)] = 3000,
     render_pdf: Annotated[bool, typer.Option("--render-pdf/--no-render-pdf")] = True,
 ) -> None:
-    if ctx.invoked_subcommand is not None:
-        return
-    if input_path is None:
-        if ctx.resilient_parsing:
-            return
-        console.print(ctx.get_help())
-        raise typer.Exit(code=0)
-
-    config = RunConfig(
+    _run_cli_callback(
+        ctx=ctx,
+        input_path=input_path,
+        output_path=output_path,
         provider=provider,
         model=model,
         api_key_env=api_key_env,
-        max_concurrency=max_concurrency,
-        resume=resume,
-        force=force,
-        glossary_path=glossary,
-        name_map_path=name_map,
-        chapter_strategy=chapter_strategy,
-        manual_toc_path=manual_toc,
-        chunk_size=chunk_size,
-        render_pdf=render_pdf,
-    )
-    _run_books_with_cli_progress(
+        config_type=RunConfig,
+        config_kwargs={
+            "max_concurrency": max_concurrency,
+            "resume": resume,
+            "force": force,
+            "glossary_path": glossary,
+            "name_map_path": name_map,
+            "chapter_strategy": chapter_strategy,
+            "manual_toc_path": manual_toc,
+            "chunk_size": chunk_size,
+            "render_pdf": render_pdf,
+        },
         description="Processing books",
-        runner=lambda event_listener: run_engineering_books_sync(
+        runner=lambda config, event_listener: run_engineering_books_sync(
             input_path=input_path,
             output_path=output_path,
             config=config,
             event_listener=event_listener,
         ),
         summary_formatter=_format_engineering_summary,
+        use_console_for_help=True,
     )
 
 
@@ -149,12 +279,30 @@ def publishing(
     ctx: typer.Context,
     input_path: Annotated[
         Path | None,
-        typer.Option("--input", exists=True, file_okay=True, dir_okay=True),
+        typer.Option(
+            "--input",
+            exists=True,
+            file_okay=True,
+            dir_okay=True,
+            help=_input_help_text(),
+        ),
     ] = None,
-    output_path: Annotated[Path, typer.Option("--output")] = DEFAULT_OUTPUT_PATH,
-    provider: Annotated[str, typer.Option("--provider")] = "openai",
-    model: Annotated[str | None, typer.Option("--model")] = None,
-    api_key_env: Annotated[str | None, typer.Option("--api-key-env")] = None,
+    output_path: Annotated[
+        Path,
+        typer.Option("--output", help=_output_help_text()),
+    ] = DEFAULT_OUTPUT_PATH,
+    provider: Annotated[
+        str,
+        typer.Option("--provider", help=_provider_help_text()),
+    ] = get_default_provider_option().provider_id,
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help=_model_help_text()),
+    ] = None,
+    api_key_env: Annotated[
+        str | None,
+        typer.Option("--api-key-env", help=_api_key_env_help_text()),
+    ] = None,
     max_concurrency: Annotated[int, typer.Option("--max-concurrency", min=1)] = 3,
     resume: Annotated[bool, typer.Option("--resume/--no-resume")] = True,
     force: Annotated[bool, typer.Option("--force")] = False,
@@ -188,60 +336,42 @@ def publishing(
     ),
 ) -> None:
     """Publishing workflows."""
-    if ctx.invoked_subcommand is not None:
-        return
-    if input_path is None:
-        if ctx.resilient_parsing:
-            return
-        typer.echo(ctx.get_help())
-        raise typer.Exit(code=0)
-
-    config = PublishingRunConfig(
+    _run_cli_callback(
+        ctx=ctx,
+        input_path=input_path,
+        output_path=output_path,
         provider=provider,
         model=model,
         api_key_env=api_key_env,
-        max_concurrency=max_concurrency,
-        resume=resume,
-        force=force,
-        glossary_path=glossary,
-        name_map_path=name_map,
-        chapter_strategy=chapter_strategy,
-        manual_toc_path=manual_toc,
-        chunk_size=chunk_size,
-        render_pdf=render_pdf,
-        style=style,
-        from_stage=from_stage,
-        to_stage=to_stage,
-        also_pdf=also_pdf,
-        also_epub=also_epub,
-        audit_depth=audit_depth,
-        enable_cross_review=enable_cross_review,
-        image_policy=image_policy,
-    )
-    _run_async_sync(
-        _run_publishing_cli(
-            input_path=input_path,
-            output_path=output_path,
-            config=config,
-        )
-    )
-
-
-async def _run_publishing_cli(
-    *,
-    input_path: Path,
-    output_path: Path,
-    config: PublishingRunConfig,
-) -> list[dict[str, object]]:
-    return _run_books_with_cli_progress(
+        config_type=PublishingRunConfig,
+        config_kwargs={
+            "max_concurrency": max_concurrency,
+            "resume": resume,
+            "force": force,
+            "glossary_path": glossary,
+            "name_map_path": name_map,
+            "chapter_strategy": chapter_strategy,
+            "manual_toc_path": manual_toc,
+            "chunk_size": chunk_size,
+            "render_pdf": render_pdf,
+            "style": style,
+            "from_stage": from_stage,
+            "to_stage": to_stage,
+            "also_pdf": also_pdf,
+            "also_epub": also_epub,
+            "audit_depth": audit_depth,
+            "enable_cross_review": enable_cross_review,
+            "image_policy": image_policy,
+        },
         description="Processing publishing books",
-        runner=lambda event_listener: run_publishing_books_sync(
+        runner=lambda config, event_listener: run_publishing_books_sync(
             input_path=input_path,
             output_path=output_path,
             config=config,
             event_listener=event_listener,
         ),
         summary_formatter=_format_publishing_summary,
+        use_console_for_help=False,
     )
 
 
