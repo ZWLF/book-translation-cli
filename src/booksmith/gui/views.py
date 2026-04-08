@@ -152,7 +152,10 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
 
     ttk.Label(
         workspace_body,
-        text="Workspace output / 工作区输出目录: translated PDF, EPUB, TXT, and audit artifacts are stored here.",
+        text=(
+            "Workspace output / 工作区输出目录: "
+            "translated PDF, EPUB, TXT, and audit artifacts are stored here."
+        ),
         wraplength=760,
         foreground="#555555",
     ).grid(row=2, column=0, sticky="w", pady=(8, 0))

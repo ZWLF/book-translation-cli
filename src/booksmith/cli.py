@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-from pydantic import ValidationError
 
 from booksmith.app_services import (
     BookDiscoveryError,
@@ -17,10 +17,6 @@ from booksmith.app_services import (
     run_publishing_books_sync,
 )
 from booksmith.config import PublishingRunConfig, RunConfig
-from booksmith.provider_catalog import (
-    get_default_provider_option,
-    list_enabled_provider_options,
-)
 from booksmith.output.pdf_raster import (
     choose_sample_pages,
     parse_page_spec,
@@ -30,6 +26,10 @@ from booksmith.output.pdf_raster import (
 )
 from booksmith.output.polished_pdf import build_printable_book, render_polished_pdf
 from booksmith.output.title_enrichment import enrich_missing_titles
+from booksmith.provider_catalog import (
+    get_default_provider_option,
+    list_enabled_provider_options,
+)
 from booksmith.state.workspace import Workspace
 
 app = typer.Typer(
@@ -336,42 +336,58 @@ def publishing(
     ),
 ) -> None:
     """Publishing workflows."""
-    _run_cli_callback(
-        ctx=ctx,
-        input_path=input_path,
-        output_path=output_path,
+    if ctx.invoked_subcommand is not None:
+        return
+    if input_path is None:
+        _print_help_and_exit(ctx, use_console=False)
+
+    config = _build_run_config(
+        config_type=PublishingRunConfig,
         provider=provider,
         model=model,
         api_key_env=api_key_env,
-        config_type=PublishingRunConfig,
-        config_kwargs={
-            "max_concurrency": max_concurrency,
-            "resume": resume,
-            "force": force,
-            "glossary_path": glossary,
-            "name_map_path": name_map,
-            "chapter_strategy": chapter_strategy,
-            "manual_toc_path": manual_toc,
-            "chunk_size": chunk_size,
-            "render_pdf": render_pdf,
-            "style": style,
-            "from_stage": from_stage,
-            "to_stage": to_stage,
-            "also_pdf": also_pdf,
-            "also_epub": also_epub,
-            "audit_depth": audit_depth,
-            "enable_cross_review": enable_cross_review,
-            "image_policy": image_policy,
-        },
+        max_concurrency=max_concurrency,
+        resume=resume,
+        force=force,
+        glossary_path=glossary,
+        name_map_path=name_map,
+        chapter_strategy=chapter_strategy,
+        manual_toc_path=manual_toc,
+        chunk_size=chunk_size,
+        render_pdf=render_pdf,
+        style=style,
+        from_stage=from_stage,
+        to_stage=to_stage,
+        also_pdf=also_pdf,
+        also_epub=also_epub,
+        audit_depth=audit_depth,
+        enable_cross_review=enable_cross_review,
+        image_policy=image_policy,
+    )
+    _run_async_sync(
+        _run_publishing_cli(
+            input_path=input_path,
+            output_path=output_path,
+            config=config,
+        )
+    )
+
+
+async def _run_publishing_cli(
+    *,
+    input_path: Path,
+    output_path: Path,
+    config: PublishingRunConfig,
+) -> list[dict[str, object]]:
+    return _run_books_with_cli_progress(
         description="Processing publishing books",
-        runner=lambda config, event_listener: run_publishing_books_sync(
+        runner=lambda event_listener: run_publishing_books_sync(
             input_path=input_path,
             output_path=output_path,
             config=config,
             event_listener=event_listener,
         ),
         summary_formatter=_format_publishing_summary,
-        use_console_for_help=False,
     )
 
 
