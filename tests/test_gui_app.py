@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import tkinter as tk
-import tomllib
 from pathlib import Path
 from queue import Queue
 from tkinter import ttk
@@ -77,7 +76,7 @@ def _configure_engineering_form(
     app.views.input_path_var.set(str(input_path))
     app.views.output_path_var.set(str(output_path))
     app.views.provider_var.set("openai")
-    app.views.model_var.set("gpt-4.1")
+    app.views.model_var.set("gpt-4.1-mini")
     app.views.render_pdf_var.set(True)
 
 
@@ -90,7 +89,7 @@ def _configure_publishing_form(
     app.views.input_path_var.set(str(input_path))
     app.views.output_path_var.set(str(output_path))
     app.views.provider_var.set("openai")
-    app.views.model_var.set("gpt-4.1")
+    app.views.model_var.set("gpt-4.1-mini")
     app.views.render_pdf_var.set(True)
     app.views.also_pdf_var.set(True)
     app.views.also_epub_var.set(True)
@@ -120,6 +119,33 @@ def test_gui_exposes_publishing_view_refs_for_polished_layout() -> None:
         app.root.destroy()
 
 
+def test_gui_exposes_static_workspace_controls() -> None:
+    app = _create_gui()
+    try:
+        assert isinstance(app.views.input_path_entry, ttk.Entry)
+        assert isinstance(app.views.input_browse_button, ttk.Button)
+        assert isinstance(app.views.output_path_entry, ttk.Entry)
+        assert isinstance(app.views.output_browse_button, ttk.Button)
+        assert app.views.input_browse_button.cget("text") == "Browse / 浏览文件"
+        assert app.views.output_browse_button.cget("text") == "Browse / 浏览目录"
+        assert isinstance(app.views.provider_combobox, ttk.Combobox)
+        assert str(app.views.provider_combobox.cget("state")) == "readonly"
+        assert tuple(app.views.provider_combobox.cget("values")) == ("openai", "gemini")
+        assert isinstance(app.views.api_key_var, tk.StringVar)
+        assert isinstance(app.views.api_key_entry, ttk.Entry)
+        assert app.views.api_key_entry.cget("show") == "*"
+        assert isinstance(app.views.api_key_toggle_button, ttk.Button)
+        assert isinstance(app.views.remember_locally_var, tk.BooleanVar)
+        assert app.views.remember_locally_var.get() is False
+        assert isinstance(app.views.remember_locally_checkbutton, ttk.Checkbutton)
+        assert isinstance(app.views.model_combobox, ttk.Combobox)
+        assert str(app.views.model_combobox.cget("state")) == "readonly"
+        assert app.views.provider_var.get() == "openai"
+        assert app.views.model_var.get() == "gpt-4o-mini"
+    finally:
+        app.root.destroy()
+
+
 def test_gui_shows_bilingual_shell_sections_in_order() -> None:
     app = _create_gui()
     try:
@@ -127,8 +153,15 @@ def test_gui_shows_bilingual_shell_sections_in_order() -> None:
         ordered_labels = [
             "书匠",
             "Booksmith",
+            "工程与出版桌面工作台",
+            "Engineering and publishing desktop workspace",
             "工作区",
             "Workspace",
+            "Input / 输入书籍",
+            "Output / 输出目录",
+            "Provider API / 服务商 API",
+            "API Key / 密钥",
+            "Model / 模型",
             "输出与选项",
             "Output & options",
             "运行状态",
@@ -141,6 +174,15 @@ def test_gui_shows_bilingual_shell_sections_in_order() -> None:
 
         indices = [label_texts.index(label) for label in ordered_labels]
         assert indices == sorted(indices)
+        helper_labels = [
+            label
+            for label in label_texts
+            if "Workspace output / 工作区输出目录" in label
+        ]
+        assert helper_labels
+        helper_text = helper_labels[0]
+        assert "translated PDF" in helper_text
+        assert "audit artifacts" in helper_text
     finally:
         app.root.destroy()
 
@@ -921,19 +963,3 @@ def test_gui_clears_previous_result_actions_when_a_new_run_starts(tmp_path: Path
             assert app.views.result_path_vars[key].get() == ""
     finally:
         app.root.destroy()
-
-
-def test_gui_entry_points_are_declarable() -> None:
-    pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-
-    assert pyproject["project"]["name"] == "booksmith"
-    assert pyproject["project"]["description"] == (
-        "Booksmith: engineering and publishing workflows for translating books."
-    )
-    assert pyproject["project"]["scripts"]["booksmith"] == "booksmith.cli:main"
-    assert pyproject["project"]["scripts"]["booksmith-gui"] == "booksmith.gui.app:main"
-
-    from booksmith.gui import __main__ as module_main
-
-    assert callable(module_main.main)

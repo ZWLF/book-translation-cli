@@ -10,9 +10,21 @@ class GuiShellViews:
     root: tk.Tk
     mode_var: tk.StringVar
     input_path_var: tk.StringVar
+    input_path_entry: ttk.Entry
+    input_browse_button: ttk.Button
     output_path_var: tk.StringVar
+    output_path_entry: ttk.Entry
+    output_browse_button: ttk.Button
     provider_var: tk.StringVar
+    provider_combobox: ttk.Combobox
+    api_key_var: tk.StringVar
+    api_key_visible_var: tk.BooleanVar
+    api_key_entry: ttk.Entry
+    api_key_toggle_button: ttk.Button
+    remember_locally_var: tk.BooleanVar
+    remember_locally_checkbutton: ttk.Checkbutton
     model_var: tk.StringVar
+    model_combobox: ttk.Combobox
     render_pdf_var: tk.BooleanVar
     also_pdf_var: tk.BooleanVar
     also_epub_var: tk.BooleanVar
@@ -60,7 +72,10 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
     input_path_var = tk.StringVar(master=root, value="")
     output_path_var = tk.StringVar(master=root, value="")
     provider_var = tk.StringVar(master=root, value="openai")
-    model_var = tk.StringVar(master=root, value="")
+    api_key_var = tk.StringVar(master=root, value="")
+    api_key_visible_var = tk.BooleanVar(master=root, value=False)
+    remember_locally_var = tk.BooleanVar(master=root, value=False)
+    model_var = tk.StringVar(master=root, value="gpt-4o-mini")
     render_pdf_var = tk.BooleanVar(master=root, value=True)
     also_pdf_var = tk.BooleanVar(master=root, value=False)
     also_epub_var = tk.BooleanVar(master=root, value=False)
@@ -112,39 +127,74 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
 
     workspace_body = ttk.Frame(workspace_section, padding=(0, 0, 0, 4))
     workspace_body.grid(row=0, column=0, sticky="ew")
-    workspace_body.columnconfigure(1, weight=1)
+    workspace_body.columnconfigure(0, weight=1)
 
-    ttk.Label(workspace_body, text="Input").grid(row=0, column=0, sticky="w")
-    ttk.Entry(workspace_body, textvariable=input_path_var).grid(
-        row=0,
-        column=1,
-        sticky="ew",
-        padx=(12, 0),
+    provider_options = ("openai", "gemini")
+    model_options = ("gpt-4o-mini", "gpt-4.1-mini")
+
+    input_row = ttk.Frame(workspace_body)
+    input_row.grid(row=0, column=0, sticky="ew")
+    input_row.columnconfigure(1, weight=1)
+    ttk.Label(input_row, text="Input / 输入书籍").grid(row=0, column=0, sticky="w")
+    input_path_entry = ttk.Entry(input_row, textvariable=input_path_var)
+    input_path_entry.grid(row=0, column=1, sticky="ew", padx=(12, 0))
+    input_browse_button = ttk.Button(input_row, text="Browse / 浏览文件", width=14)
+    input_browse_button.grid(row=0, column=2, sticky="e", padx=(12, 0))
+
+    output_row = ttk.Frame(workspace_body)
+    output_row.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+    output_row.columnconfigure(1, weight=1)
+    ttk.Label(output_row, text="Output / 输出目录").grid(row=0, column=0, sticky="w")
+    output_path_entry = ttk.Entry(output_row, textvariable=output_path_var)
+    output_path_entry.grid(row=0, column=1, sticky="ew", padx=(12, 0))
+    output_browse_button = ttk.Button(output_row, text="Browse / 浏览目录", width=14)
+    output_browse_button.grid(row=0, column=2, sticky="e", padx=(12, 0))
+
+    ttk.Label(
+        workspace_body,
+        text="Workspace output / 工作区输出目录: translated PDF, EPUB, TXT, and audit artifacts are stored here.",
+        wraplength=760,
+        foreground="#555555",
+    ).grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+    provider_row = ttk.Frame(workspace_body)
+    provider_row.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+    provider_row.columnconfigure(1, weight=1)
+    ttk.Label(provider_row, text="Provider API / 服务商 API").grid(row=0, column=0, sticky="w")
+    provider_combobox = ttk.Combobox(
+        provider_row,
+        textvariable=provider_var,
+        values=provider_options,
+        state="readonly",
     )
-    ttk.Label(workspace_body, text="Output").grid(row=1, column=0, sticky="w", pady=(10, 0))
-    ttk.Entry(workspace_body, textvariable=output_path_var).grid(
-        row=1,
-        column=1,
-        sticky="ew",
-        padx=(12, 0),
-        pady=(10, 0),
+    provider_combobox.grid(row=0, column=1, sticky="ew", padx=(12, 0))
+
+    api_key_row = ttk.Frame(workspace_body)
+    api_key_row.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+    api_key_row.columnconfigure(1, weight=1)
+    ttk.Label(api_key_row, text="API Key / 密钥").grid(row=0, column=0, sticky="w")
+    api_key_entry = ttk.Entry(api_key_row, textvariable=api_key_var, show="*")
+    api_key_entry.grid(row=0, column=1, sticky="ew", padx=(12, 0))
+    api_key_toggle_button = ttk.Button(api_key_row, text="Show / 显示", width=12)
+    api_key_toggle_button.grid(row=0, column=2, sticky="e", padx=(12, 0))
+    remember_locally_checkbutton = ttk.Checkbutton(
+        api_key_row,
+        text="Remember locally / 本地记住",
+        variable=remember_locally_var,
     )
-    ttk.Label(workspace_body, text="Provider").grid(row=2, column=0, sticky="w", pady=(10, 0))
-    ttk.Entry(workspace_body, textvariable=provider_var).grid(
-        row=2,
-        column=1,
-        sticky="ew",
-        padx=(12, 0),
-        pady=(10, 0),
+    remember_locally_checkbutton.grid(row=1, column=1, columnspan=2, sticky="w", pady=(6, 0))
+
+    model_row = ttk.Frame(workspace_body)
+    model_row.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+    model_row.columnconfigure(1, weight=1)
+    ttk.Label(model_row, text="Model / 模型").grid(row=0, column=0, sticky="w")
+    model_combobox = ttk.Combobox(
+        model_row,
+        textvariable=model_var,
+        values=model_options,
+        state="readonly",
     )
-    ttk.Label(workspace_body, text="Model").grid(row=3, column=0, sticky="w", pady=(10, 0))
-    ttk.Entry(workspace_body, textvariable=model_var).grid(
-        row=3,
-        column=1,
-        sticky="ew",
-        padx=(12, 0),
-        pady=(10, 0),
-    )
+    model_combobox.grid(row=0, column=1, sticky="ew", padx=(12, 0))
 
     _add_section_heading(
         outer,
@@ -368,9 +418,21 @@ def build_shell(root: tk.Tk, *, mode_var: tk.StringVar) -> GuiShellViews:
         root=root,
         mode_var=mode_var,
         input_path_var=input_path_var,
+        input_path_entry=input_path_entry,
+        input_browse_button=input_browse_button,
         output_path_var=output_path_var,
+        output_path_entry=output_path_entry,
+        output_browse_button=output_browse_button,
         provider_var=provider_var,
+        provider_combobox=provider_combobox,
+        api_key_var=api_key_var,
+        api_key_visible_var=api_key_visible_var,
+        api_key_entry=api_key_entry,
+        api_key_toggle_button=api_key_toggle_button,
+        remember_locally_var=remember_locally_var,
+        remember_locally_checkbutton=remember_locally_checkbutton,
         model_var=model_var,
+        model_combobox=model_combobox,
         render_pdf_var=render_pdf_var,
         also_pdf_var=also_pdf_var,
         also_epub_var=also_epub_var,
