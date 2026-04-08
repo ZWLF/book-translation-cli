@@ -44,6 +44,59 @@ def test_build_runtime_request_builds_engineering_request_with_expected_outputs(
     assert [item.source_path for item in request.expected_outputs] == [input_path, input_path]
 
 
+def test_build_runtime_request_uses_explicit_api_key_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "book.pdf"
+    input_path.write_text("placeholder", encoding="utf-8")
+    output_path = tmp_path / "out"
+    monkeypatch.setenv("OPENAI_API_KEY", "test-env-key")
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=test-dotenv-key\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    form = GuiFormState(
+        mode="engineering",
+        input_path=input_path,
+        output_path=output_path,
+        provider="openai",
+        model="gpt-4o-mini",
+        api_key="test-explicit-key",
+        persist_api_key=True,
+    )
+
+    request = build_runtime_request(form)
+
+    assert request.config.api_key == "test-explicit-key"
+    assert request.config.resolved_api_key() == "test-explicit-key"
+
+
+def test_build_runtime_request_uses_explicit_api_key_override_in_publishing_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "book.pdf"
+    input_path.write_text("placeholder", encoding="utf-8")
+    output_path = tmp_path / "out"
+    monkeypatch.setenv("GEMINI_API_KEY", "test-env-key")
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=test-dotenv-key\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    form = GuiFormState(
+        mode="publishing",
+        input_path=input_path,
+        output_path=output_path,
+        provider="gemini",
+        model="gemini-3.1-flash-lite-preview",
+        api_key="test-publishing-explicit-key",
+        persist_api_key=True,
+    )
+
+    request = build_runtime_request(form)
+
+    assert isinstance(request.config, PublishingRunConfig)
+    assert request.config.api_key == "test-publishing-explicit-key"
+    assert request.config.resolved_api_key() == "test-publishing-explicit-key"
+
+
 def test_expected_outputs_for_form_works_before_provider_and_model_are_ready(
     tmp_path: Path,
 ) -> None:

@@ -71,6 +71,7 @@ def build_runtime_request(form: GuiFormState) -> GuiRuntimeRequest:
         config = RunConfig(
             provider=form.provider.strip(),
             model=form.model.strip(),
+            api_key=form.api_key.strip() or None,
             resume=form.resume,
             force=form.force,
             glossary_path=form.glossary_path,
@@ -426,6 +427,7 @@ def _build_publishing_config(form: GuiFormState) -> PublishingRunConfig:
         return PublishingRunConfig(
             provider=form.provider.strip(),
             model=form.model.strip(),
+            api_key=form.api_key.strip() or None,
             resume=form.resume,
             force=form.force,
             glossary_path=form.glossary_path,

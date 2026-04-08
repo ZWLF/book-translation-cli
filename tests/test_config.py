@@ -20,6 +20,23 @@ def test_resolved_api_key_falls_back_to_dotenv(
     assert config.resolved_api_key() == "test-dotenv-key"
 
 
+def test_resolved_api_key_prefers_explicit_override_over_env_and_dotenv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-env-key")
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=test-dotenv-key\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    config = RunConfig(
+        provider="gemini",
+        model="gemini-3.1-flash-lite-preview",
+        api_key="test-explicit-key",
+    )
+
+    assert config.resolved_api_key() == "test-explicit-key"
+
+
 def test_run_config_rejects_unknown_provider() -> None:
     with pytest.raises(ValidationError, match="Unsupported provider: zhipu"):
         RunConfig(provider="zhipu", model="glm-4-flash")

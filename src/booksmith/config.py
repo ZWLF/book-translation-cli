@@ -36,6 +36,7 @@ class RunConfig(BaseModel):
     provider: str = DEFAULT_PROVIDER_ID
     model: str | None = None
     api_key_env: str | None = None
+    api_key: str | None = None
     max_concurrency: int = 5
     resume: bool = True
     force: bool = False
@@ -73,14 +74,13 @@ class RunConfig(BaseModel):
         return self.api_key_env or get_provider_option(self.provider).api_key_env
 
     def resolved_api_key(self) -> str:
-        api_key = os.getenv(self.resolved_api_key_env()) or _read_dotenv_value(
-            Path.cwd() / ".env",
-            self.resolved_api_key_env(),
-        )
+        if self.api_key:
+            return self.api_key
+
+        api_key_env = self.resolved_api_key_env()
+        api_key = os.getenv(api_key_env) or _read_dotenv_value(Path.cwd() / ".env", api_key_env)
         if not api_key:
-            raise ValueError(
-                f"Missing API key in environment variable {self.resolved_api_key_env()}."
-            )
+            raise ValueError(f"Missing API key in environment variable {api_key_env}.")
         return api_key
 
     def config_fingerprint(self) -> str:

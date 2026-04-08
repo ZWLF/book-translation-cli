@@ -21,6 +21,8 @@ class GuiFormState:
     output_path: Path | None = None
     provider: str = "openai"
     model: str = ""
+    api_key: str = ""
+    persist_api_key: bool = False
     resume: bool = True
     force: bool = False
     glossary_path: Path | None = None
