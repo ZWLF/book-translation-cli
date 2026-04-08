@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from booksmith.models import StructuredPublishingBook
 from booksmith.output.polished_pdf import (
     PrintableBook,
     PrintableChapter,
@@ -123,6 +124,45 @@ def _apply_title_overrides(book: PrintableBook, overrides: dict[str, str]) -> Pr
         estimated_cost_usd=book.estimated_cost_usd,
         chapters=chapters,
     )
+
+
+def apply_title_overrides_to_printable_book(
+    book: PrintableBook,
+    overrides: dict[str, str],
+) -> PrintableBook:
+    if not overrides or not hasattr(book, "chapters"):
+        return book
+    return _apply_title_overrides(book, overrides)
+
+
+def apply_title_overrides_to_structured_book(
+    book: StructuredPublishingBook,
+    overrides: dict[str, str],
+) -> StructuredPublishingBook:
+    if not overrides:
+        return book
+
+    chapters = []
+    for chapter in book.chapters:
+        source_title = (chapter.source_title or "").strip()
+        existing_title = (chapter.translated_title or "").strip()
+        resolved_title = (
+            _preferred_chapter_title_zh(
+                source_title or existing_title,
+                overrides.get(chapter.chapter_id) or existing_title or None,
+            )
+            or existing_title
+            or source_title
+        )
+        chapters.append(
+            chapter.model_copy(
+                update={
+                    "translated_title": resolved_title,
+                },
+                deep=True,
+            )
+        )
+    return book.model_copy(update={"chapters": chapters}, deep=True)
 
 
 def _normalize_title_translation(text: str) -> str | None:

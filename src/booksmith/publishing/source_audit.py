@@ -11,6 +11,22 @@ _STRUCTURED_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _REFERENCE_LINE_RE = re.compile(r"^\s*\d{2,4}\s+\S")
+_REFERENCE_QUOTE_RE = re.compile(r'["\u201c\u201d\u2018\u2019鈥]')
+_REFERENCE_KEYWORD_RE = re.compile(
+    r"\b(?:podcast|summit|conference|speech|interview|blog|transcript|episode|plan|"
+    r"account|youtube|commencement|combinator)\b",
+    re.IGNORECASE,
+)
+_AUDIT_WRAPPER_PREFIXES = (
+    "这本书：",
+    "本书：",
+    "书籍：",
+    "章节：",
+    "分块索引：",
+    "索引：",
+    "原文片段索引：",
+    "翻译如下：",
+)
 
 
 def audit_source_against_target(
@@ -20,16 +36,20 @@ def audit_source_against_target(
     target_text: str,
     source_title: str | None = None,
 ) -> list[PublishingAuditFinding]:
+    normalized_target_text = _strip_audit_wrapper_lines(target_text)
     findings: list[PublishingAuditFinding] = []
 
-    if _looks_like_collapsed_numbered_list(source_text=source_text, target_text=target_text):
+    if _looks_like_collapsed_numbered_list(
+        source_text=source_text,
+        target_text=normalized_target_text,
+    ):
         findings.append(
             _build_audit_finding(
                 chapter_id=chapter_id,
                 finding_type="collapsed_numbered_list",
                 severity="high",
                 source_excerpt=_excerpt(source_text),
-                target_excerpt=_excerpt(target_text),
+                target_excerpt=_excerpt(normalized_target_text),
                 reason="Ordered list markers in source are not preserved as block items in target.",
                 auto_fixable=True,
                 confidence=0.95,
@@ -41,14 +61,14 @@ def audit_source_against_target(
         _detect_list_structure_loss(
             chapter_id=chapter_id,
             source_text=source_text,
-            target_text=target_text,
+            target_text=normalized_target_text,
         )
     )
     findings.extend(
         _detect_possible_omissions(
             chapter_id=chapter_id,
             source_text=source_text,
-            target_text=target_text,
+            target_text=normalized_target_text,
             source_title=source_title,
         )
     )
@@ -56,17 +76,39 @@ def audit_source_against_target(
         _detect_callout_candidates(
             chapter_id=chapter_id,
             source_text=source_text,
-            target_text=target_text,
+            target_text=normalized_target_text,
         )
     )
     findings.extend(
         _detect_question_answer_structure(
             chapter_id=chapter_id,
             source_text=source_text,
-            target_text=target_text,
+            target_text=normalized_target_text,
         )
     )
     return findings
+
+
+def _strip_audit_wrapper_lines(text: str) -> str:
+    normalized = re.sub(
+        r"^(?:(?:\u8fd9\u672c\u4e66\uff1a|\u672c\u4e66\uff1a|\u4e66\u7c4d\uff1a)[^\n]*[\s\u3000]*)?"
+        r"(?:(?:\u7ae0\u8282\uff1a)[^\n]*[\s\u3000]*)?"
+        r"(?:(?:\u5206\u5757\u7d22\u5f15\uff1a|\u7d22\u5f15\uff1a|\u539f\u6587\u7247\u6bb5\u7d22\u5f15\uff1a)\d+[\s\u3000]*)*"
+        r"(?:\u7ffb\u8bd1\u5982\u4e0b\uff1a[\s\u3000]*)?",
+        "",
+        text.replace("\r\n", "\n").strip(),
+        count=1,
+    )
+    lines = []
+    for raw_line in normalized.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            lines.append("")
+            continue
+        if stripped.startswith(_AUDIT_WRAPPER_PREFIXES):
+            continue
+        lines.append(stripped)
+    return "\n".join(lines).strip()
 
 
 def _looks_like_collapsed_numbered_list(*, source_text: str, target_text: str) -> bool:
@@ -365,6 +407,13 @@ def _should_relax_cross_language_omission(
             return True
 
         if (
+            target_sentence_count >= 6
+            and len(target_units) >= 6
+            and _tail_units_are_reference_heavy(source_units, target_units)
+        ):
+            return True
+
+        if (
             shared_numeric_anchors >= 3
             and target_sentence_count >= max(4, int(source_sentence_count * 0.08))
         ):
@@ -401,6 +450,24 @@ def _latin_letter_count(text: str) -> int:
 
 def _cjk_character_count(text: str) -> int:
     return len(re.findall(r"[\u4e00-\u9fff]", text))
+
+
+def _tail_units_are_reference_heavy(
+    source_units: list[str],
+    target_units: list[str],
+) -> bool:
+    if len(target_units) >= len(source_units):
+        return False
+    tail_units = source_units[len(target_units) :]
+    if len(tail_units) < 6:
+        return False
+    reference_tail = tail_units[min(3, len(tail_units)) :]
+    if len(reference_tail) < 4:
+        return False
+    reference_like_count = sum(
+        1 for unit in reference_tail if _looks_like_reference_tail_fragment(unit)
+    )
+    return reference_like_count >= max(3, int(len(reference_tail) * 0.75))
 
 
 def _normalize_unit(text: str) -> str:
@@ -450,19 +517,9 @@ def _trim_non_body_tail_units(units: list[str]) -> list[str]:
 
 def _looks_like_reference_tail_unit(text: str) -> bool:
     compact = re.sub(r"\s+", " ", text).strip()
-    if not re.match(r"^\d{2,4}\s+\S", compact):
-        return False
-    if re.search(r"https?://|www\.", compact, re.I):
-        return True
-    if re.search(r'["“”]', compact):
-        return True
-    return bool(
-        re.search(
-            r"\b(?:podcast|summit|conference|speech|interview|blog|transcript|episode|plan)\b",
-            compact,
-            re.I,
-        )
-    )
+    if _REFERENCE_LINE_RE.match(compact):
+        return _looks_like_numbered_reference_entry(compact)
+    return _looks_like_unnumbered_reference_entry(compact)
 
 
 def _looks_like_boundary_heading(text: str) -> bool:
@@ -486,28 +543,53 @@ def _strip_leading_title_unit(units: list[str], source_title: str | None) -> lis
 
 def _looks_like_structured_line_block(text: str) -> bool:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if len(lines) < 3:
+    if len(lines) < 2:
         return False
-    if all(_STRUCTURED_LINE_RE.match(line) for line in lines):
+    if len(lines) >= 3 and all(_STRUCTURED_LINE_RE.match(line) for line in lines):
         return True
     return all(_looks_like_reference_line(line) for line in lines)
 
 
 def _looks_like_reference_line(text: str) -> bool:
     compact = re.sub(r"\s+", " ", text).strip()
-    if not _REFERENCE_LINE_RE.match(compact):
+    if _REFERENCE_LINE_RE.match(compact):
+        return _looks_like_numbered_reference_entry(compact)
+    return _looks_like_unnumbered_reference_entry(compact)
+
+
+def _looks_like_numbered_reference_entry(compact: str) -> bool:
+    if re.search(r"https?://|www\.", compact, re.I):
+        return True
+    if _REFERENCE_QUOTE_RE.search(compact):
+        return True
+    return bool(_REFERENCE_KEYWORD_RE.search(compact))
+
+
+def _looks_like_unnumbered_reference_entry(compact: str) -> bool:
+    if not compact or not re.search(r'\.[\"\'\u201d\u2019]?$', compact):
         return False
     if re.search(r"https?://|www\.", compact, re.I):
         return True
-    if re.search(r'["“”]', compact):
+    if _REFERENCE_KEYWORD_RE.search(compact):
         return True
-    return bool(
-        re.search(
-            r"\b(?:podcast|summit|conference|speech|interview|blog|transcript|episode|plan)\b",
-            compact,
-            re.I,
-        )
-    )
+    return bool(_REFERENCE_QUOTE_RE.search(compact) and "," in compact)
+
+
+def _looks_like_reference_tail_fragment(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact or _CJK_RE.search(compact):
+        return False
+    if _looks_like_reference_tail_unit(compact):
+        return True
+    if re.search(r"https?://|www\.|youtube\.|com/watch\?|v=[A-Za-z0-9_-]+", compact, re.I):
+        return True
+    if _REFERENCE_KEYWORD_RE.search(compact):
+        return True
+    if _REFERENCE_QUOTE_RE.search(compact):
+        return True
+    if any(char.isdigit() for char in compact) and compact.endswith((".", "?")):
+        return True
+    return "," in compact and compact.endswith((".", "?"))
 
 
 def _split_sentences(text: str) -> list[str]:

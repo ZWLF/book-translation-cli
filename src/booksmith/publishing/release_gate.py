@@ -36,6 +36,7 @@ def evaluate_release_gate(inputs: PublishingGateInputs) -> dict[str, object]:
             inputs.citation_issue_count == 0,
             inputs.image_or_caption_issue_count == 0,
             inputs.visual_blocker_count == 0,
+            inputs.redline_blocker_count == 0,
             inputs.primary_output_validation_passed,
             inputs.cross_output_validation_passed,
         ]

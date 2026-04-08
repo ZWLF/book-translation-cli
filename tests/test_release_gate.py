@@ -132,3 +132,29 @@ def test_release_gate_fails_when_primary_output_validation_is_false() -> None:
     assert report["hard_gate_passed"] is False
     assert report["release_status"] == "failed"
     assert report["promotion_performed"] is False
+
+
+def test_release_gate_fails_when_redline_blockers_exist() -> None:
+    inputs = PublishingGateInputs(
+        unresolved_count=0,
+        high_severity_count=0,
+        structural_issue_count=0,
+        citation_issue_count=0,
+        image_or_caption_issue_count=0,
+        visual_blocker_count=0,
+        primary_output_validation_passed=True,
+        cross_output_validation_passed=True,
+        fidelity_score=9.4,
+        structure_score=9.2,
+        terminology_score=9.1,
+        layout_score=9.0,
+        source_style_alignment_score=9.0,
+        epub_integrity_score=9.0,
+        redline_blocker_count=2,
+    )
+
+    report = evaluate_release_gate(inputs)
+
+    assert report["hard_gate_passed"] is False
+    assert report["release_status"] == "failed"
+    assert report["promotion_performed"] is False

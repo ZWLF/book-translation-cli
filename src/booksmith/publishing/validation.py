@@ -1,9 +1,30 @@
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from posixpath import normpath
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
+
+_REFERENCE_LINE_RE = re.compile(r"^\s*\d{2,4}\s+\S")
+_URL_LINE_RE = re.compile(r"^\s*(?:https?://|www\.)\S+\s*$", re.IGNORECASE)
+_TRAILING_REFERENCE_RE = re.compile(r"\s\d{2,4}[.)]?\s*$")
+_REFERENCE_QUOTE_RE = re.compile(r"[\"“”‘’鈥]")
+_REFERENCE_KEYWORD_RE = re.compile(
+    r"\b(?:podcast|blog|speech|conference|interview|account|youtube|commencement|combinator)\b",
+    re.IGNORECASE,
+)
+_ASCII_LETTER_RE = re.compile(r"[A-Za-z]")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_MARKDOWN_DECORATION_RE = re.compile(
+    r"(^|[\s\"“”'‘’(\[])"
+    r"(?P<marker>\*\*|__)"
+    r"(?=\S)"
+    r".+?"
+    r"(?<=\S)(?P=marker)"
+    r"(?=$|[\s\"“”'‘’).,!?:;\]])"
+)
 
 
 def validate_primary_output(path: Path, output_kind: str) -> dict[str, object]:
@@ -48,6 +69,81 @@ def validate_epub_output(path: Path) -> dict[str, object]:
 def summarize_visual_blockers(blockers: list[dict[str, object]]) -> dict[str, object]:
     return {
         "visual_blocker_count": len(blockers),
+        "blockers": blockers,
+    }
+
+
+def validate_publishing_redlines(
+    *,
+    text_path: Path,
+    chapters_path: Path | None = None,
+) -> dict[str, object]:
+    blockers: list[dict[str, object]] = []
+    markdown_artifact_count = 0
+    orphan_numeric_line_count = 0
+    english_body_line_count = 0
+    english_title_line_count = 0
+
+    if text_path.exists():
+        for line_number, raw_line in enumerate(
+            text_path.read_text(encoding="utf-8", errors="replace").splitlines(),
+            start=1,
+        ):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if _has_markdown_artifact(line):
+                markdown_artifact_count += 1
+                blockers.append(
+                    {
+                        "type": "markdown_artifact",
+                        "line_number": line_number,
+                        "line": line,
+                    }
+                )
+                continue
+            if _is_orphan_numeric_line(line):
+                orphan_numeric_line_count += 1
+                blockers.append(
+                    {
+                        "type": "orphan_numeric_line",
+                        "line_number": line_number,
+                        "line": line,
+                    }
+                )
+                continue
+            if _is_english_body_line(line):
+                english_body_line_count += 1
+                blockers.append(
+                    {
+                        "type": "english_body_line",
+                        "line_number": line_number,
+                        "line": line,
+                    }
+                )
+
+    if chapters_path and chapters_path.exists():
+        for chapter_index, title in enumerate(_load_chapter_titles(chapters_path), start=1):
+            if not _is_english_only_line(title):
+                continue
+            english_title_line_count += 1
+            blockers.append(
+                {
+                    "type": "english_title_line",
+                    "chapter_index": chapter_index,
+                    "line": title,
+                }
+            )
+
+    return {
+        "passed": not blockers,
+        "path": str(text_path),
+        "chapters_path": str(chapters_path) if chapters_path else None,
+        "blocker_count": len(blockers),
+        "markdown_artifact_count": markdown_artifact_count,
+        "orphan_numeric_line_count": orphan_numeric_line_count,
+        "english_body_line_count": english_body_line_count,
+        "english_title_line_count": english_title_line_count,
         "blockers": blockers,
     }
 
@@ -132,3 +228,56 @@ def _resolve_zip_path(rootfile_path: str, href: str) -> str:
 def _rootfile_parent(path: str) -> str:
     parent = str(Path(path).parent).replace("\\", "/")
     return "" if parent == "." else parent
+
+
+def _has_markdown_artifact(line: str) -> bool:
+    stripped = line.strip()
+    if stripped == "***":
+        return True
+    return _MARKDOWN_DECORATION_RE.search(stripped) is not None
+
+
+def _is_orphan_numeric_line(line: str) -> bool:
+    return line.isdigit()
+
+
+def _is_english_body_line(line: str) -> bool:
+    return _is_english_only_line(line) and not _is_reference_like_line(line)
+
+
+def _is_english_only_line(line: str) -> bool:
+    return bool(_ASCII_LETTER_RE.search(line)) and not bool(_CJK_RE.search(line))
+
+
+def _is_reference_like_line(line: str) -> bool:
+    stripped = line.strip()
+    if _REFERENCE_LINE_RE.match(stripped):
+        return True
+    if _URL_LINE_RE.match(stripped):
+        return True
+    if _TRAILING_REFERENCE_RE.search(stripped) is not None:
+        return True
+    if _REFERENCE_KEYWORD_RE.search(stripped):
+        return True
+    if _REFERENCE_QUOTE_RE.search(stripped) and "," in stripped and stripped.endswith("."):
+        return True
+    return False
+
+
+def _load_chapter_titles(path: Path) -> list[str]:
+    titles: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not raw_line.strip():
+            continue
+        try:
+            payload = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        title = str(
+            payload.get("translated_title")
+            or payload.get("title")
+            or ""
+        ).strip()
+        if title:
+            titles.append(title)
+    return titles

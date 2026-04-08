@@ -14,6 +14,17 @@ _NUMBERED_ITEM_RE = re.compile(r"^\s*(\d{1,3})[.)]\s*(.+?)\s*$")
 _INLINE_NUMBERED_MARKER_RE = re.compile(r"(?<!\d)(\d{1,3})[.)]\s*")
 _TAIL_REFERENCE_MARKER_RE = re.compile(r"(?<!\d)(\d{2,4})\s+(?=\S)")
 _WHITESPACE_RE = re.compile(r"\s+")
+_MARKDOWN_HEADING_RE = re.compile(r"^\s*(?:\*\*|__)(.+?)(?:\*\*|__)\s*$")
+_MARKDOWN_SEPARATOR_RE = re.compile(r"^\s*\*{3,}\s*$")
+_WRAPPER_LINE_PREFIXES = (
+    "\u672c\u4e66\uff1a",
+    "\u4e66\u7c4d\uff1a",
+    "\u7ae0\u8282\uff1a",
+    "\u5206\u5757\u7d22\u5f15\uff1a",
+    "\u7d22\u5f15\uff1a",
+    "\u539f\u6587\u7247\u6bb5\u7d22\u5f15\uff1a",
+    "\u7ffb\u8bd1\u5982\u4e0b\uff1a",
+)
 
 
 def build_structured_book(
@@ -31,9 +42,14 @@ def build_structured_chapter(
     source_assets: list[dict[str, object]],
     source_title: str | None = None,
 ) -> StructuredPublishingChapter:
+    normalized_text, translated_title = _normalize_translated_chapter_text(
+        translated_text=artifact.text,
+        source_title=source_title,
+        fallback_title=artifact.title,
+    )
     blocks = _build_blocks_from_text(
         chapter_id=artifact.chapter_id,
-        translated_text=artifact.text,
+        translated_text=normalized_text,
         source_text=source_text,
     )
     assets = _normalize_source_assets(source_assets)
@@ -46,7 +62,7 @@ def build_structured_chapter(
         chapter_id=artifact.chapter_id,
         chapter_index=artifact.chapter_index,
         source_title=source_title,
-        translated_title=artifact.title,
+        translated_title=translated_title,
         blocks=blocks,
         assets=assets,
     )
@@ -64,6 +80,27 @@ def _build_blocks_from_text(
     numbered_anchor_index = 0
 
     for paragraph in _split_paragraphs(translated_text):
+        paragraph = _strip_leading_wrapper_lines(paragraph)
+        if not paragraph:
+            continue
+        if _MARKDOWN_SEPARATOR_RE.match(paragraph):
+            continue
+
+        heading_text, body_text = _extract_markdown_heading(paragraph)
+        if heading_text:
+            blocks.append(
+                PublishingBlock(
+                    block_id=_block_id(chapter_id=chapter_id, order_index=block_index),
+                    kind="heading",
+                    text=heading_text,
+                    order_index=block_index,
+                )
+            )
+            block_index += 1
+            paragraph = body_text
+            if not paragraph:
+                continue
+
         numbered_items = _extract_numbered_items(paragraph)
         if numbered_items:
             for _, item_text in numbered_items:
@@ -95,6 +132,9 @@ def _build_blocks_from_text(
                     block_index += 1
             continue
 
+        paragraph = _normalize_paragraph_text(paragraph)
+        if not paragraph:
+            continue
         blocks.append(
             PublishingBlock(
                 block_id=_block_id(chapter_id=chapter_id, order_index=block_index),
@@ -117,6 +157,137 @@ def _split_paragraphs(text: str) -> list[str]:
         for paragraph in re.split(r"\n\s*\n+", normalized)
         if paragraph.strip()
     ]
+
+
+def _normalize_translated_chapter_text(
+    *,
+    translated_text: str,
+    source_title: str | None,
+    fallback_title: str,
+) -> tuple[str, str]:
+    normalized = translated_text.replace("\r\n", "\n").strip()
+    normalized = _strip_compact_translation_wrapper(normalized)
+    paragraphs = [
+        cleaned
+        for paragraph in _split_paragraphs(normalized)
+        if (cleaned := _strip_leading_wrapper_lines(paragraph))
+    ]
+    resolved_title = fallback_title
+    if paragraphs:
+        extracted_title, remaining_paragraph = _extract_translated_title(paragraphs[0])
+        has_following_body = bool(remaining_paragraph) or len(paragraphs) > 1
+        if (
+            extracted_title
+            and has_following_body
+            and source_title
+            and _looks_like_english_heading(source_title)
+        ):
+            resolved_title = extracted_title
+            if remaining_paragraph:
+                paragraphs[0] = remaining_paragraph
+            else:
+                paragraphs = paragraphs[1:]
+    return "\n\n".join(paragraphs).strip(), resolved_title
+
+
+def _strip_compact_translation_wrapper(text: str) -> str:
+    return re.sub(
+        r"^(?:(?:\u672c\u4e66\uff1a|\u4e66\u7c4d\uff1a)[^\n]*[\s\u3000]*)?"
+        r"(?:(?:\u7ae0\u8282\uff1a)[^\n]*[\s\u3000]*)?"
+        r"(?:(?:\u5206\u5757\u7d22\u5f15\uff1a|\u7d22\u5f15\uff1a|\u539f\u6587\u7247\u6bb5\u7d22\u5f15\uff1a)\d+[\s\u3000]*)*"
+        r"(?:\u7ffb\u8bd1\u5982\u4e0b\uff1a[\s\u3000]*)?",
+        "",
+        text,
+        count=1,
+    ).strip()
+
+
+def _strip_leading_wrapper_lines(paragraph: str) -> str:
+    lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+    while lines and lines[0].startswith(_WRAPPER_LINE_PREFIXES):
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def _extract_translated_title(paragraph: str) -> tuple[str | None, str]:
+    lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+    if not lines:
+        return None, ""
+    first_line = _strip_markdown_markers(lines[0])
+    if not _looks_like_translated_title_candidate(first_line):
+        return None, paragraph.strip()
+    remaining = "\n".join(lines[1:]).strip()
+    return first_line, remaining
+
+
+def _extract_markdown_heading(paragraph: str) -> tuple[str | None, str]:
+    lines = [line.rstrip() for line in paragraph.splitlines() if line.strip()]
+    if not lines:
+        return None, ""
+    match = _MARKDOWN_HEADING_RE.match(lines[0].strip())
+    if match is None:
+        return None, paragraph
+    heading = _strip_markdown_markers(match.group(1))
+    body = "\n".join(line.strip() for line in lines[1:] if line.strip()).strip()
+    return heading, body
+
+
+def _normalize_paragraph_text(paragraph: str) -> str:
+    lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    merged = _merge_orphan_numeric_lines(lines)
+    return "\n".join(merged).strip()
+
+
+def _merge_orphan_numeric_lines(lines: list[str]) -> list[str]:
+    merged: list[str] = []
+    pending_numbers: list[str] = []
+    for line in lines:
+        if line.isdigit():
+            pending_numbers.append(line)
+            continue
+        if pending_numbers:
+            combined_numbers = " ".join(pending_numbers)
+            if merged:
+                merged[-1] = f"{merged[-1]} {combined_numbers}".strip()
+            else:
+                line = f"{combined_numbers} {line}".strip()
+            pending_numbers = []
+        merged.append(line)
+    if pending_numbers:
+        combined_numbers = " ".join(pending_numbers)
+        if merged:
+            merged[-1] = f"{merged[-1]} {combined_numbers}".strip()
+        else:
+            merged.append(combined_numbers)
+    return merged
+
+
+def _strip_markdown_markers(text: str) -> str:
+    return text.strip().strip("*_").strip()
+
+
+def _looks_like_translated_title_candidate(text: str) -> bool:
+    candidate = text.strip()
+    if not candidate:
+        return False
+    if _NUMBERED_ITEM_RE.match(candidate):
+        return False
+    if candidate.startswith("[") or candidate.startswith("【"):
+        return False
+    if len(candidate) > 40:
+        return False
+    if re.search(r"[。！？；!?]$", candidate):
+        return False
+    return bool(re.search(r"[\u4e00-\u9fff]", candidate))
+
+
+def _looks_like_english_heading(text: str) -> bool:
+    candidate = text.strip()
+    return bool(re.search(r"[A-Za-z]", candidate)) and not bool(
+        re.search(r"[\u4e00-\u9fff]", candidate)
+    )
 
 
 def _extract_numbered_items(paragraph: str) -> list[tuple[str, str]]:

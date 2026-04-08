@@ -379,6 +379,30 @@ async def test_rebuild_stable_publishing_outputs_routes_primary_and_extra_format
         fake_render_polished_pdf,
     )
     monkeypatch.setattr(
+        "booksmith.publishing.pipeline.validate_publishing_redlines",
+        lambda **kwargs: {
+            "passed": True,
+            "blocker_count": 0,
+            "markdown_artifact_count": 0,
+            "orphan_numeric_line_count": 0,
+            "english_body_line_count": 0,
+            "english_title_line_count": 0,
+            "blockers": [],
+        },
+    )
+    monkeypatch.setattr(
+        "booksmith.publishing.pipeline.validate_publishing_redlines",
+        lambda **kwargs: {
+            "passed": True,
+            "blocker_count": 0,
+            "markdown_artifact_count": 0,
+            "orphan_numeric_line_count": 0,
+            "english_body_line_count": 0,
+            "english_title_line_count": 0,
+            "blockers": [],
+        },
+    )
+    monkeypatch.setattr(
         "booksmith.publishing.pipeline.render_structured_epub",
         fake_render_structured_epub,
     )
@@ -741,6 +765,30 @@ async def test_final_review_cache_hit_survives_rebuild_written_title_translation
         "booksmith.publishing.pipeline.render_polished_pdf",
         fake_render_polished_pdf,
     )
+    monkeypatch.setattr(
+        "booksmith.publishing.pipeline.validate_publishing_redlines",
+        lambda **kwargs: {
+            "passed": True,
+            "blocker_count": 0,
+            "markdown_artifact_count": 0,
+            "orphan_numeric_line_count": 0,
+            "english_body_line_count": 0,
+            "english_title_line_count": 0,
+            "blockers": [],
+        },
+    )
+    monkeypatch.setattr(
+        "booksmith.publishing.pipeline.validate_publishing_redlines",
+        lambda **kwargs: {
+            "passed": True,
+            "blocker_count": 0,
+            "markdown_artifact_count": 0,
+            "orphan_numeric_line_count": 0,
+            "english_body_line_count": 0,
+            "english_title_line_count": 0,
+            "blockers": [],
+        },
+    )
 
     await process_book_publishing(
         input_path=input_path,
@@ -812,6 +860,18 @@ async def test_process_book_publishing_rebuilds_pdf_when_title_translations_chan
     monkeypatch.setattr(
         "booksmith.publishing.pipeline.render_polished_pdf",
         fake_render_polished_pdf,
+    )
+    monkeypatch.setattr(
+        "booksmith.publishing.pipeline.validate_publishing_redlines",
+        lambda **kwargs: {
+            "passed": True,
+            "blocker_count": 0,
+            "markdown_artifact_count": 0,
+            "orphan_numeric_line_count": 0,
+            "english_body_line_count": 0,
+            "english_title_line_count": 0,
+            "blockers": [],
+        },
     )
 
     await process_book_publishing(
@@ -992,6 +1052,18 @@ async def test_deep_review_rerun_preserves_last_good_final_outputs_on_render_fai
         "booksmith.publishing.pipeline.render_polished_pdf",
         fake_render_polished_pdf,
     )
+    monkeypatch.setattr(
+        "booksmith.publishing.pipeline.validate_publishing_redlines",
+        lambda **kwargs: {
+            "passed": True,
+            "blocker_count": 0,
+            "markdown_artifact_count": 0,
+            "orphan_numeric_line_count": 0,
+            "english_body_line_count": 0,
+            "english_title_line_count": 0,
+            "blockers": [],
+        },
+    )
 
     await process_book_publishing(
         input_path=input_path,
@@ -1139,3 +1211,35 @@ async def test_passing_gate_promotes_candidate_outputs(
     final_text = (workspace_dir / "final" / "translated.txt").read_text(encoding="utf-8")
 
     assert final_text == candidate_text
+
+
+@pytest.mark.asyncio
+async def test_process_book_publishing_persists_redline_blockers_in_gate_report(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "sample.epub"
+    _build_sample_epub(input_path)
+
+    await process_book_publishing(
+        input_path=input_path,
+        output_root=tmp_path / "out",
+        config=PublishingRunConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            to_stage="deep-review",
+            render_pdf=False,
+        ),
+        provider=FakeProvider(),
+    )
+
+    from booksmith.state.workspace import Workspace
+
+    workspace = Workspace(tmp_path / "out" / "sample")
+    gate_report = json.loads(
+        workspace.publishing_final_gate_report_path.read_text(encoding="utf-8")
+    )
+
+    assert gate_report["release_status"] == "failed"
+    assert gate_report["promotion_performed"] is False
+    assert gate_report["redline_summary"]["blocker_count"] > 0
+    assert gate_report["redline_summary"]["english_title_line_count"] > 0
