@@ -224,7 +224,7 @@ git commit -m "feat: rename CLI and GUI entry points to Booksmith"
 - Modify: `README.zh-CN.md`
 - Modify: `README.ja.md`
 - Modify: `docs/design.md`
-- Modify: `docs/superpowers/specs/2026-04-05-booksmith-rename-design.md` only if cross-links need the new repo name after rename
+- Modify: `docs/archive/superpowers/specs/2026-04-05-booksmith-rename-design.md` only if cross-links need the new repo name after rename
 - Modify: any other docs in `docs/` that identify the product as `Book Translation CLI` or `Book Translator`
 - Test: repo-wide reference scan
 

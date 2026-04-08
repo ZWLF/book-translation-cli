@@ -564,7 +564,7 @@ git commit -m "Document and verify deep-review publishing workflow"
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-04-03-source-aware-publishing-deep-review.md`. Two execution options:
+Plan complete and saved to `docs/archive/superpowers/plans/2026-04-03-source-aware-publishing-deep-review.md`. Two execution options:
 
 **1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
 

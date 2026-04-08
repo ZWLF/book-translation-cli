@@ -33,7 +33,7 @@ On Windows, you can also double-click one of these launchers from the repo root:
 To build a standalone Windows GUI app (fast startup, recommended):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build-gui-exe.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\build-gui-exe.ps1
 ```
 
 Output:
@@ -45,7 +45,7 @@ Startup note: the default `onedir` build is optimized for launch speed. In local
 Optional single-file build (slower startup, but one executable file):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build-gui-exe.ps1 -OneFile
+powershell -ExecutionPolicy Bypass -File .\scripts\build-gui-exe.ps1 -OneFile
 ```
 
 Output:
