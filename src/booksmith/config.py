@@ -8,14 +8,18 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from booksmith.provider_catalog import (
+    DEFAULT_PROVIDER_ID,
+    get_provider_option,
+    list_enabled_provider_options,
+)
+
 DEFAULT_MODELS = {
-    "openai": "gpt-4o-mini",
-    "gemini": "gemini-3.1-flash-lite-preview",
+    option.provider_id: option.default_model for option in list_enabled_provider_options()
 }
 
 DEFAULT_KEY_ENV = {
-    "openai": "OPENAI_API_KEY",
-    "gemini": "GEMINI_API_KEY",
+    option.provider_id: option.api_key_env for option in list_enabled_provider_options()
 }
 
 PUBLISHING_STAGES = (
@@ -29,7 +33,7 @@ PUBLISHING_STAGES = (
 
 
 class RunConfig(BaseModel):
-    provider: str = "openai"
+    provider: str = DEFAULT_PROVIDER_ID
     model: str | None = None
     api_key_env: str | None = None
     max_concurrency: int = 5
@@ -44,11 +48,29 @@ class RunConfig(BaseModel):
     request_timeout_seconds: float = 60.0
     max_attempts: int = 4
 
+    @model_validator(mode="after")
+    def validate_provider(self) -> RunConfig:
+        option = get_provider_option(self.provider)
+        self.provider = option.provider_id
+        return self
+
+    @model_validator(mode="after")
+    def validate_model(self) -> RunConfig:
+        if self.model:
+            option = get_provider_option(self.provider)
+            if self.model not in option.models:
+                allowed_models = ", ".join(option.models)
+                raise ValueError(
+                    f"Unsupported model for provider {self.provider}: {self.model}. "
+                    f"Allowed models: {allowed_models}."
+                )
+        return self
+
     def resolved_model(self) -> str:
-        return self.model or DEFAULT_MODELS[self.provider]
+        return self.model or get_provider_option(self.provider).default_model
 
     def resolved_api_key_env(self) -> str:
-        return self.api_key_env or DEFAULT_KEY_ENV[self.provider]
+        return self.api_key_env or get_provider_option(self.provider).api_key_env
 
     def resolved_api_key(self) -> str:
         api_key = os.getenv(self.resolved_api_key_env()) or _read_dotenv_value(
