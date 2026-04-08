@@ -15,6 +15,14 @@ The format is based on Keep a Changelog and uses project version `MAJOR.MINOR.PA
 - Publishing repair and audit stages now normalize synthetic wrapper text more conservatively and avoid promoting false 9.x scores for candidate books with visible output defects.
 - Release gating now factors real blocker counts into final promotion decisions and aligns gate scores with observable output quality.
 
+## [0.1.1.1] - 2026-04-09
+
+### Fixed
+- GUI EXE rebuilds now resolve the repository root correctly after the build script moved under `scripts/`, so packaged Windows launches pick up the latest desktop UI instead of a stale bundle.
+
+### Added
+- A regression test that locks the GUI build script to repo-root based packaging paths and prevents the broken post-move path math from coming back.
+
 ## [0.1.1.0] - 2026-04-08
 
 ### Added
