@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "booksmith"
-version = "0.1.0"
+version = "0.1.1"
 description = "Booksmith: engineering and publishing workflows for translating books."
 readme = "README.md"
 requires-python = ">=3.11"

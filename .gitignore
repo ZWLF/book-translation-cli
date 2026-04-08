@@ -1,5 +1,6 @@
 .pytest_cache/
 .ruff_cache/
+.gstack/
 .venv/
 venv/
 dist/
@@ -14,4 +15,5 @@ artifacts/
 *.log
 *.pdf
 *.epub
+Booksmith-GUI.spec
 tests/fixtures/generated/

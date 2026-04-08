@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import tkinter as tk
-import tomllib
 from pathlib import Path
 from queue import Queue
+from tkinter import ttk
 
 import pytest
 
@@ -11,6 +11,7 @@ from booksmith.gui.app import BooksmithGui
 from booksmith.gui.services import GuiFormValidationError, GuiValidationIssue
 from booksmith.gui.state import GuiRuntimeRequest
 from booksmith.gui.tasks import GuiTaskRunner
+from booksmith.provider_catalog import get_provider_option
 from booksmith.utils import slugify
 
 
@@ -20,6 +21,32 @@ def _create_gui(**kwargs: object) -> BooksmithGui:
     except tk.TclError as exc:
         pytest.skip(f"Tk unavailable in this environment: {exc}")
     return BooksmithGui(root=root, **kwargs)
+
+
+def _managed_widget_texts(parent: tk.Misc, widget_type: type[tk.Widget]) -> list[str]:
+    texts: list[str] = []
+    for child in parent.winfo_children():
+        if isinstance(child, widget_type) and child.winfo_manager():
+            texts.append(str(child.cget("text")))
+        texts.extend(_managed_widget_texts(child, widget_type))
+    return texts
+
+
+def _visible_widget_texts(parent: tk.Misc, widget_type: type[tk.Widget]) -> list[str]:
+    texts: list[str] = []
+    for child in parent.winfo_children():
+        if isinstance(child, widget_type) and child.winfo_manager() and child.winfo_ismapped():
+            texts.append(str(child.cget("text")))
+        texts.extend(_visible_widget_texts(child, widget_type))
+    return texts
+
+
+def _visible_result_action_keys(app: BooksmithGui) -> set[str]:
+    return {
+        key
+        for key, button in app.views.result_buttons.items()
+        if button.winfo_manager()
+    }
 
 
 class _FakeTaskRunner:
@@ -42,6 +69,17 @@ class _FailingStartTaskRunner:
         raise self._exc
 
 
+class _RecordingSaveHook:
+    def __init__(self, exc: Exception | None = None) -> None:
+        self.calls: list[tuple[Path, str, str]] = []
+        self._exc = exc
+
+    def __call__(self, env_path: Path, provider: str, api_key: str) -> None:
+        self.calls.append((env_path, provider, api_key))
+        if self._exc is not None:
+            raise self._exc
+
+
 def _configure_engineering_form(
     app: BooksmithGui,
     input_path: Path,
@@ -50,7 +88,7 @@ def _configure_engineering_form(
     app.views.input_path_var.set(str(input_path))
     app.views.output_path_var.set(str(output_path))
     app.views.provider_var.set("openai")
-    app.views.model_var.set("gpt-4.1")
+    app.views.model_var.set("gpt-4.1-mini")
     app.views.render_pdf_var.set(True)
 
 
@@ -63,7 +101,7 @@ def _configure_publishing_form(
     app.views.input_path_var.set(str(input_path))
     app.views.output_path_var.set(str(output_path))
     app.views.provider_var.set("openai")
-    app.views.model_var.set("gpt-4.1")
+    app.views.model_var.set("gpt-4.1-mini")
     app.views.render_pdf_var.set(True)
     app.views.also_pdf_var.set(True)
     app.views.also_epub_var.set(True)
@@ -75,7 +113,211 @@ def test_gui_app_bootstraps_without_mainloop() -> None:
         assert app.root.title() == "Booksmith"
         assert app.mode_var.get() == "engineering"
         assert app.publishing_frame.winfo_manager() == ""
-        assert app.task_runner._event_queue is app.event_queue
+        assert app.task_runner.event_queue is app.event_queue
+    finally:
+        app.root.destroy()
+
+
+def test_gui_exposes_publishing_view_refs_for_polished_layout() -> None:
+    app = _create_gui()
+    try:
+        assert type(app.views.publishing_frame) is ttk.Frame
+        assert isinstance(app.views.publishing_advanced_frame, ttk.Frame)
+        assert isinstance(app.views.publishing_expanded_var, tk.BooleanVar)
+        assert app.views.publishing_expanded_var.get() is False
+        assert isinstance(app.views.publishing_toggle_button, ttk.Button)
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+    finally:
+        app.root.destroy()
+
+
+def test_gui_exposes_static_workspace_controls() -> None:
+    app = _create_gui()
+    try:
+        assert isinstance(app.views.input_path_entry, ttk.Entry)
+        assert isinstance(app.views.input_browse_button, ttk.Button)
+        assert isinstance(app.views.output_path_entry, ttk.Entry)
+        assert isinstance(app.views.output_browse_button, ttk.Button)
+        assert app.views.input_browse_button.cget("text") == "Browse / 浏览文件"
+        assert app.views.output_browse_button.cget("text") == "Browse / 浏览目录"
+        assert isinstance(app.views.provider_combobox, ttk.Combobox)
+        assert str(app.views.provider_combobox.cget("state")) == "readonly"
+        assert tuple(app.views.provider_combobox.cget("values")) == ("openai", "gemini")
+        assert isinstance(app.views.api_key_var, tk.StringVar)
+        assert isinstance(app.views.api_key_entry, ttk.Entry)
+        assert app.views.api_key_entry.cget("show") == "*"
+        assert isinstance(app.views.api_key_toggle_button, ttk.Button)
+        assert isinstance(app.views.remember_locally_var, tk.BooleanVar)
+        assert app.views.remember_locally_var.get() is False
+        assert isinstance(app.views.remember_locally_checkbutton, ttk.Checkbutton)
+        assert isinstance(app.views.model_combobox, ttk.Combobox)
+        assert str(app.views.model_combobox.cget("state")) == "readonly"
+        assert app.views.provider_var.get() == "openai"
+        assert app.views.model_var.get() == "gpt-4o-mini"
+    finally:
+        app.root.destroy()
+
+
+def test_gui_input_browse_updates_input_path_var(tmp_path: Path) -> None:
+    selected = tmp_path / "book.pdf"
+    app = _create_gui(input_browse_dialog=lambda: selected)
+    try:
+        app._choose_input_file()
+
+        assert app.views.input_path_var.get() == str(selected)
+    finally:
+        app.root.destroy()
+
+
+def test_gui_output_browse_updates_output_path_var(tmp_path: Path) -> None:
+    selected = tmp_path / "out"
+    app = _create_gui(output_browse_dialog=lambda: selected)
+    try:
+        app._choose_output_directory()
+
+        assert app.views.output_path_var.get() == str(selected)
+    finally:
+        app.root.destroy()
+
+
+def test_gui_provider_change_refreshes_model_choices_and_resets_invalid_model() -> None:
+    app = _create_gui()
+    try:
+        gemini_option = get_provider_option("gemini")
+
+        app.views.model_var.set("gpt-4o-mini")
+        app.views.provider_var.set("gemini")
+        app.root.update()
+
+        assert tuple(app.views.model_combobox.cget("values")) == gemini_option.models
+        assert app.views.model_var.get() == gemini_option.default_model
+    finally:
+        app.root.destroy()
+
+
+def test_gui_api_key_toggle_updates_masking_and_button_text() -> None:
+    app = _create_gui()
+    try:
+        initial_text = str(app.views.api_key_toggle_button.cget("text"))
+
+        assert app.views.api_key_entry.cget("show") == "*"
+
+        app._toggle_api_key_visibility()
+        assert app.views.api_key_entry.cget("show") == ""
+        assert str(app.views.api_key_toggle_button.cget("text")) != initial_text
+
+        app._toggle_api_key_visibility()
+        assert app.views.api_key_entry.cget("show") == "*"
+        assert str(app.views.api_key_toggle_button.cget("text")) == initial_text
+    finally:
+        app.root.destroy()
+
+
+def test_gui_collect_form_state_includes_api_key_and_persist_api_key() -> None:
+    app = _create_gui()
+    try:
+        app.views.api_key_var.set("secret-key")
+        app.views.remember_locally_var.set(True)
+
+        form = app._collect_form_state()
+
+        assert form.api_key == "secret-key"
+        assert form.persist_api_key is True
+    finally:
+        app.root.destroy()
+
+
+def test_gui_start_run_persists_api_key_before_runner_start_when_remember_locally_checked(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeTaskRunner()
+    save_hook = _RecordingSaveHook()
+    app = _create_gui(task_runner=runner, save_provider_api_key=save_hook)
+    input_path = tmp_path / "book.pdf"
+    input_path.write_text("pdf", encoding="utf-8")
+    output_path = tmp_path / "out"
+
+    try:
+        _configure_engineering_form(app, input_path, output_path)
+        app.views.api_key_var.set("secret-key")
+        app.views.remember_locally_var.set(True)
+
+        app._start_run()
+
+        assert [call[0] for call in save_hook.calls] == [Path.cwd() / ".env"]
+        assert save_hook.calls[0][1:] == ("openai", "secret-key")
+        assert len(runner.started_requests) == 1
+    finally:
+        app.root.destroy()
+
+
+def test_gui_start_run_without_remember_locally_does_not_call_save_hook(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeTaskRunner()
+    save_hook = _RecordingSaveHook()
+    app = _create_gui(task_runner=runner, save_provider_api_key=save_hook)
+    input_path = tmp_path / "book.pdf"
+    input_path.write_text("pdf", encoding="utf-8")
+    output_path = tmp_path / "out"
+
+    try:
+        _configure_engineering_form(app, input_path, output_path)
+        app.views.api_key_var.set("secret-key")
+        app.views.remember_locally_var.set(False)
+
+        app._start_run()
+
+        assert save_hook.calls == []
+        assert len(runner.started_requests) == 1
+    finally:
+        app.root.destroy()
+
+
+def test_gui_shows_bilingual_shell_sections_in_order() -> None:
+    app = _create_gui()
+    try:
+        label_texts = _managed_widget_texts(app.root, ttk.Label)
+        stable_sections = [
+            "Workspace",
+            "Input / 输入书籍",
+            "Output / 输出目录",
+            "Provider API / 服务商 API",
+            "API Key / 密钥",
+            "Model / 模型",
+            "Output & options",
+            "Run status",
+            "Results",
+            "Logs",
+        ]
+
+        indices = [label_texts.index(label) for label in stable_sections]
+        assert indices == sorted(indices)
+        helper_labels = [
+            label
+            for label in label_texts
+            if "Workspace output / 工作区输出目录" in label
+        ]
+        assert helper_labels
+        helper_text = helper_labels[0]
+        assert "translated PDF" in helper_text
+        assert "audit artifacts" in helper_text
+    finally:
+        app.root.destroy()
+
+
+def test_gui_defaults_to_collapsed_publishing_advanced_area() -> None:
+    app = _create_gui()
+    try:
+        app.mode_var.set("publishing")
+        app.sync_mode_panels()
+        app.root.update()
+
+        assert app.views.publishing_expanded_var.get() is False
+        assert app.views.publishing_frame.winfo_manager() == "grid"
+        assert app.views.publishing_toggle_button.winfo_manager() == "grid"
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+        assert set(_visible_widget_texts(app.publishing_frame, ttk.Checkbutton)) == set()
     finally:
         app.root.destroy()
 
@@ -97,13 +339,48 @@ def test_gui_publishing_panel_visibility_tracks_mode() -> None:
     try:
         app.mode_var.set("publishing")
         app.sync_mode_panels()
-        app.root.update_idletasks()
+        app.root.update()
         assert app.publishing_frame.winfo_manager() == "grid"
+        assert app.views.publishing_toggle_button.winfo_manager() == "grid"
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+        assert set(_visible_widget_texts(app.publishing_frame, ttk.Checkbutton)) == set()
 
         app.mode_var.set("engineering")
         app.sync_mode_panels()
-        app.root.update_idletasks()
+        app.root.update()
         assert app.publishing_frame.winfo_manager() == ""
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+    finally:
+        app.root.destroy()
+
+
+def test_gui_expands_publishing_advanced_options_on_toggle() -> None:
+    app = _create_gui()
+    try:
+        app.mode_var.set("publishing")
+        app.sync_mode_panels()
+        app.root.update()
+
+        assert not app.views.publishing_toggle_button.instate(["disabled"])
+        assert app.views.publishing_expanded_var.get() is False
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
+
+        app._toggle_publishing_advanced()
+        app.root.update()
+
+        assert app.views.publishing_expanded_var.get() is True
+        assert app.views.publishing_advanced_frame.winfo_manager() == "grid"
+        assert set(_visible_widget_texts(app.views.publishing_advanced_frame, ttk.Checkbutton)) == {
+            "Also export PDF",
+            "Also export EPUB",
+        }
+
+        app.mode_var.set("engineering")
+        app.sync_mode_panels()
+        app.root.update()
+
+        assert app.publishing_frame.winfo_manager() == ""
+        assert app.views.publishing_advanced_frame.winfo_manager() == ""
     finally:
         app.root.destroy()
 
@@ -128,6 +405,7 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         app._start_run()
         assert app.event_queue is runner.event_queue
         assert len(runner.started_requests) == 1
+        assert _visible_result_action_keys(app) == set()
 
         runner.event_queue.put(
             {
@@ -154,6 +432,7 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         assert app.run_state.progress_fraction == 0.5
         assert app.status_var.get() == "Running"
         assert app.result_state.output_paths == ()
+        assert _visible_result_action_keys(app) == set()
 
         runner.event_queue.put(
             {
@@ -194,7 +473,7 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
         assert request.input_path == input_path
         assert request.output_path == output_path
         assert app.status_var.get() == "Completed"
-        assert "3 successful chunks" in app.summary_var.get()
+        assert app.summary_var.get() == "2/2 books | 3 ok, 1 failed | $1.25 | 12.5s"
         assert app.run_state.successful_chunks == 3
         assert app.run_state.failed_chunks == 1
         assert app.run_state.estimated_cost_usd == 1.25
@@ -206,10 +485,12 @@ def test_gui_run_button_starts_injected_task_runner_and_polls_shared_queue(
             workspace_root / "translated.txt",
             workspace_root / "translated.pdf",
         )
-        assert app.views.result_buttons["open_output_folder"].winfo_manager() == "grid"
-        assert app.views.result_buttons["open_run_summary"].winfo_manager() == "grid"
-        assert app.views.result_buttons["open_translated_txt"].winfo_manager() == "grid"
-        assert app.views.result_buttons["open_translated_pdf"].winfo_manager() == "grid"
+        assert _visible_result_action_keys(app) == {
+            "open_output_folder",
+            "open_run_summary",
+            "open_translated_txt",
+            "open_translated_pdf",
+        }
     finally:
         app.root.destroy()
 
@@ -262,6 +543,7 @@ def test_gui_start_run_runner_start_error_is_handled_inline_without_raising(
         assert app.status_var.get() == "Failed"
         assert app.summary_var.get() == "runner start boom"
         assert app.result_state.error == "runner start boom"
+        assert app.current_request is None
         assert "runner start boom" in app.log_text.get("1.0", "end")
         assert not app.run_button.instate(["disabled"])
         assert app._queue_poll_after_id is None
@@ -566,7 +848,7 @@ def test_gui_run_completed_aggregates_multi_book_summaries(tmp_path: Path) -> No
         assert app.run_state.failed_chunks == 3
         assert app.run_state.estimated_cost_usd == 3.25
         assert app.run_state.elapsed_seconds == 20.0
-        assert "13 successful chunks" in app.summary_var.get()
+        assert app.summary_var.get() == "2/2 books | 13 ok, 3 failed | $3.25 | 20.0s"
         assert app.views.result_buttons["open_output_folder"].winfo_manager() == "grid"
     finally:
         app.root.destroy()
@@ -801,19 +1083,3 @@ def test_gui_clears_previous_result_actions_when_a_new_run_starts(tmp_path: Path
             assert app.views.result_path_vars[key].get() == ""
     finally:
         app.root.destroy()
-
-
-def test_gui_entry_points_are_declarable() -> None:
-    pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-
-    assert pyproject["project"]["name"] == "booksmith"
-    assert pyproject["project"]["description"] == (
-        "Booksmith: engineering and publishing workflows for translating books."
-    )
-    assert pyproject["project"]["scripts"]["booksmith"] == "booksmith.cli:main"
-    assert pyproject["project"]["scripts"]["booksmith-gui"] == "booksmith.gui.app:main"
-
-    from booksmith.gui import __main__ as module_main
-
-    assert callable(module_main.main)

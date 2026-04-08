@@ -41,10 +41,19 @@ def assemble_output_text(
 
 
 def assemble_structured_chapter_text(chapter: StructuredPublishingChapter) -> str:
-    rendered_blocks = [
-        (block, _render_structured_block(block))
-        for block in sorted(chapter.blocks, key=lambda item: item.order_index)
-    ]
+    rendered_blocks: list[tuple[PublishingBlock, str]] = []
+    ordered_run_index = 0
+    for block in sorted(chapter.blocks, key=lambda item: item.order_index):
+        if block.kind == "ordered_item":
+            ordered_run_index += 1
+            rendered = _render_structured_ordered_item(
+                block,
+                fallback_index=ordered_run_index,
+            )
+        else:
+            ordered_run_index = 0
+            rendered = _render_structured_block(block)
+        rendered_blocks.append((block, rendered))
     rendered_blocks = [
         (block, rendered) for block, rendered in rendered_blocks if rendered
     ]
@@ -83,13 +92,7 @@ def assemble_structured_publishing_output_text(
 
 def _render_structured_block(block: PublishingBlock) -> str:
     if block.kind == "ordered_item":
-        if block.source_anchor:
-            marker = _extract_ordered_marker(block.source_anchor)
-            stripped = block.text.strip()
-            if marker and stripped:
-                return f"{marker} {stripped}"
-        stripped = block.text.strip()
-        return f"{block.order_index}. {stripped}" if stripped else ""
+        return _render_structured_ordered_item(block, fallback_index=block.order_index)
     if block.kind in {
         "heading",
         "qa_question",
@@ -104,6 +107,20 @@ def _render_structured_block(block: PublishingBlock) -> str:
     }:
         return block.text.strip()
     return block.text.strip()
+
+
+def _render_structured_ordered_item(
+    block: PublishingBlock,
+    *,
+    fallback_index: int,
+) -> str:
+    if block.source_anchor:
+        marker = _extract_ordered_marker(block.source_anchor)
+        stripped = block.text.strip()
+        if marker and stripped:
+            return f"{marker} {stripped}"
+    stripped = block.text.strip()
+    return f"{fallback_index}. {stripped}" if stripped else ""
 
 
 def _should_tightly_join(previous: PublishingBlock, current: PublishingBlock) -> bool:

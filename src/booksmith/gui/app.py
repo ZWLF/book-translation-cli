@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import os
+import re
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
 from queue import Empty, Queue
+from tkinter import filedialog
 
-from booksmith.state.workspace import Workspace
-from booksmith.utils import slugify
+from booksmith.provider_catalog import get_provider_option, list_enabled_provider_options
 
-from .services import build_runtime_request
 from .state import GuiFormState, GuiResultState, GuiRunState, GuiRuntimeRequest
 from .tasks import GuiEvent, GuiTaskRunner
 from .views import GuiShellViews, build_shell
@@ -21,13 +21,17 @@ class BooksmithGui:
         *,
         root: tk.Tk | None = None,
         task_runner: GuiTaskRunner | None = None,
-        request_builder: Callable[[GuiFormState], GuiRuntimeRequest] = build_runtime_request,
+        request_builder: Callable[[GuiFormState], GuiRuntimeRequest] | None = None,
         open_path: Callable[[Path], None] | None = None,
+        input_browse_dialog: Callable[[], Path | str | None] | None = None,
+        output_browse_dialog: Callable[[], Path | str | None] | None = None,
+        save_provider_api_key: Callable[[Path, str, str], None] | None = None,
     ) -> None:
         self.root = root or tk.Tk()
         self.mode_var = tk.StringVar(master=self.root, value="engineering")
         self.views: GuiShellViews = build_shell(self.root, mode_var=self.mode_var)
         self.publishing_frame = self.views.publishing_frame
+        self.publishing_advanced_frame = self.views.publishing_advanced_frame
         self.status_var = self.views.status_var
         self.stage_var = self.views.stage_var
         self.summary_var = self.views.summary_var
@@ -39,9 +43,15 @@ class BooksmithGui:
         self.run_state = GuiRunState()
         self.result_state = GuiResultState()
         self.current_request: GuiRuntimeRequest | None = None
-        self._request_builder = request_builder
+        self._request_builder = request_builder or self._default_request_builder
         self._open_path_handler = open_path or self._default_open_path
+        self._input_browse_dialog = input_browse_dialog or self._default_input_browse_dialog
+        self._output_browse_dialog = output_browse_dialog or self._default_output_browse_dialog
+        self._save_provider_api_key = (
+            save_provider_api_key or self._default_save_provider_api_key
+        )
         self._queue_poll_after_id: str | None = None
+        self._syncing_provider_controls = False
 
         if task_runner is None:
             self.event_queue: Queue[GuiEvent] = Queue()
@@ -54,7 +64,14 @@ class BooksmithGui:
             self.event_queue = event_queue
 
         self.mode_var.trace_add("write", self._on_mode_changed)
+        self.views.provider_var.trace_add("write", self._on_provider_changed)
         self.views.run_button.configure(command=self._start_run)
+        self.views.publishing_toggle_button.configure(command=self._toggle_publishing_advanced)
+        self.views.input_browse_button.configure(command=self._choose_input_file)
+        self.views.output_browse_button.configure(command=self._choose_output_directory)
+        self.views.api_key_toggle_button.configure(command=self._toggle_api_key_visibility)
+        self._sync_provider_model_controls()
+        self._sync_api_key_visibility()
         self.sync_mode_panels()
         self._sync_state_widgets()
         self._refresh_result_actions()
@@ -67,10 +84,78 @@ class BooksmithGui:
             self.publishing_frame.grid()
         else:
             self.publishing_frame.grid_remove()
+        self._sync_publishing_advanced_visibility()
         self.root.update_idletasks()
 
     def _on_mode_changed(self, *_args: object) -> None:
         self.sync_mode_panels()
+
+    def _on_provider_changed(self, *_args: object) -> None:
+        if self._syncing_provider_controls:
+            return
+        self._sync_provider_model_controls(self.views.provider_var.get())
+
+    def _sync_provider_model_controls(self, provider_id: str | None = None) -> None:
+        enabled_options = list_enabled_provider_options()
+        provider_ids = tuple(option.provider_id for option in enabled_options)
+        self.views.provider_combobox.configure(values=provider_ids)
+
+        if not enabled_options:
+            return
+
+        requested_provider = (provider_id or self.views.provider_var.get()).strip()
+        try:
+            option = get_provider_option(requested_provider)
+        except ValueError:
+            option = enabled_options[0]
+
+        self._syncing_provider_controls = True
+        try:
+            if self.views.provider_var.get() != option.provider_id:
+                self.views.provider_var.set(option.provider_id)
+        finally:
+            self._syncing_provider_controls = False
+
+        self.views.model_combobox.configure(values=option.models)
+        current_model = self.views.model_var.get().strip()
+        if current_model not in option.models:
+            self.views.model_var.set(option.default_model)
+
+    def _sync_api_key_visibility(self) -> None:
+        visible = self.views.api_key_visible_var.get()
+        self.views.api_key_entry.configure(show="" if visible else "*")
+        self.views.api_key_toggle_button.configure(
+            text="Hide / éš�è—�" if visible else "Show / æ˜¾ç¤º",
+        )
+
+    def _toggle_api_key_visibility(self) -> None:
+        self.views.api_key_visible_var.set(not self.views.api_key_visible_var.get())
+        self._sync_api_key_visibility()
+
+    def _choose_input_file(self) -> None:
+        selection = self._input_browse_dialog()
+        path = self._path_from_selection(selection)
+        if path is not None:
+            self.views.input_path_var.set(str(path))
+
+    def _choose_output_directory(self) -> None:
+        selection = self._output_browse_dialog()
+        path = self._path_from_selection(selection)
+        if path is not None:
+            self.views.output_path_var.set(str(path))
+
+    def _toggle_publishing_advanced(self) -> None:
+        expanded = not self.views.publishing_expanded_var.get()
+        self.views.publishing_expanded_var.set(expanded)
+        self._sync_publishing_advanced_visibility()
+        self.root.update_idletasks()
+
+    def _sync_publishing_advanced_visibility(self) -> None:
+        if self.mode_var.get() != "publishing" or not self.views.publishing_expanded_var.get():
+            self.publishing_advanced_frame.grid_remove()
+            return
+
+        self.publishing_advanced_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
     def _collect_form_state(self) -> GuiFormState:
         return GuiFormState(
@@ -79,6 +164,8 @@ class BooksmithGui:
             output_path=self._path_from_var(self.views.output_path_var),
             provider=self.views.provider_var.get().strip(),
             model=self.views.model_var.get().strip(),
+            api_key=self.views.api_key_var.get(),
+            persist_api_key=self.views.remember_locally_var.get(),
             render_pdf=self.views.render_pdf_var.get(),
             also_pdf=self.views.also_pdf_var.get(),
             also_epub=self.views.also_epub_var.get(),
@@ -92,7 +179,9 @@ class BooksmithGui:
 
         request: GuiRuntimeRequest | None = None
         try:
-            request = self._request_builder(self._collect_form_state())
+            form = self._collect_form_state()
+            self._persist_api_key_if_requested(form)
+            request = self._request_builder(form)
             self.current_request = request
             self.run_state = GuiRunState(
                 status="running",
@@ -114,6 +203,11 @@ class BooksmithGui:
 
         self._schedule_queue_poll()
         self._sync_state_widgets()
+
+    def _persist_api_key_if_requested(self, form: GuiFormState) -> None:
+        if not form.persist_api_key or not form.api_key.strip():
+            return
+        self._save_provider_api_key(Path.cwd() / ".env", form.provider, form.api_key)
 
     def _schedule_queue_poll(self) -> None:
         if self._queue_poll_after_id is not None:
@@ -275,8 +369,7 @@ class BooksmithGui:
         *,
         request: GuiRuntimeRequest | None,
     ) -> None:
-        if request is None:
-            self.current_request = None
+        self.current_request = None
         message = str(exc) or exc.__class__.__name__
         self.run_state = GuiRunState(
             status="failed",
@@ -307,23 +400,27 @@ class BooksmithGui:
         if self.run_state.status == "failed":
             return self.run_state.message or "Run failed"
 
-        parts: list[str] = []
+        progress = ""
         if self.run_state.total_books:
-            parts.append(f"{self.run_state.completed_books}/{self.run_state.total_books} books")
+            progress = f"{self.run_state.completed_books}/{self.run_state.total_books} books"
+
+        metric_parts: list[str] = []
         if self.run_state.successful_chunks or self.run_state.failed_chunks:
-            parts.append(
-                f"{self.run_state.successful_chunks} successful chunks, "
-                f"{self.run_state.failed_chunks} failed"
+            metric_parts.append(
+                f"{self.run_state.successful_chunks} ok, {self.run_state.failed_chunks} failed"
             )
         if self.run_state.estimated_cost_usd:
-            parts.append(f"${self.run_state.estimated_cost_usd:.2f} estimated cost")
+            metric_parts.append(f"${self.run_state.estimated_cost_usd:.2f}")
         if self.run_state.elapsed_seconds:
-            parts.append(f"{self.run_state.elapsed_seconds:.1f}s elapsed")
-        if self.run_state.message and self.run_state.message not in parts:
-            parts.append(self.run_state.message)
-        if not parts:
-            return "Ready"
-        return " | ".join(parts)
+            metric_parts.append(f"{self.run_state.elapsed_seconds:.1f}s")
+        if metric_parts:
+            return " | ".join([progress, *metric_parts] if progress else metric_parts)
+
+        if self.run_state.message:
+            parts = [progress, self.run_state.message] if progress else [self.run_state.message]
+            return " | ".join(part for part in parts if part)
+
+        return progress or "Ready"
 
     def _apply_summary_metrics(self, summary: dict[str, object]) -> None:
         self.run_state.successful_chunks = self._int_from_dict(
@@ -553,13 +650,50 @@ class BooksmithGui:
         except ValueError:
             return self.result_state.output_paths[0].parent
 
-    def _workspace_for_current_request(self) -> Workspace | None:
+    def _workspace_for_current_request(self):
         if self.current_request is None:
             return None
         if len(self.current_request.discovered_books) == 1:
+            from booksmith.state.workspace import Workspace
+
             book = self.current_request.discovered_books[0]
-            return Workspace(self.current_request.output_path / slugify(book.stem))
+            return Workspace(self.current_request.output_path / self._slugify(book.stem))
         return None
+
+    @staticmethod
+    def _default_request_builder(form: GuiFormState) -> GuiRuntimeRequest:
+        from .services import build_runtime_request
+
+        return build_runtime_request(form)
+
+    @staticmethod
+    def _default_save_provider_api_key(env_path: Path, provider: str, api_key: str) -> None:
+        from .secrets import save_provider_api_key
+
+        save_provider_api_key(env_path, provider=provider, api_key=api_key)
+
+    @staticmethod
+    def _default_input_browse_dialog() -> Path | None:
+        selected = filedialog.askopenfilename(
+            title="Select a source file",
+            filetypes=(
+                ("Book files", "*.pdf *.epub"),
+                ("PDF files", "*.pdf"),
+                ("EPUB files", "*.epub"),
+            ),
+        )
+        return Path(selected) if selected else None
+
+    @staticmethod
+    def _default_output_browse_dialog() -> Path | None:
+        selected = filedialog.askdirectory(title="Select an output directory")
+        return Path(selected) if selected else None
+
+    @staticmethod
+    def _slugify(value: str) -> str:
+        slug = re.sub(r"[^\w\-]+", "-", value.strip().lower())
+        slug = re.sub(r"-{2,}", "-", slug).strip("-")
+        return slug or "book"
 
     def _requested_output_kinds(self) -> set[str]:
         if self.current_request is None:
@@ -621,6 +755,17 @@ class BooksmithGui:
     @staticmethod
     def _path_from_var(var: tk.StringVar) -> Path | None:
         value = var.get().strip()
+        if not value:
+            return None
+        return Path(value)
+
+    @staticmethod
+    def _path_from_selection(selection: Path | str | None) -> Path | None:
+        if selection is None:
+            return None
+        if isinstance(selection, Path):
+            return selection
+        value = str(selection).strip()
         if not value:
             return None
         return Path(value)

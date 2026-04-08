@@ -5,8 +5,6 @@ import math
 import re
 from pathlib import Path
 
-import tiktoken
-
 
 def slugify(value: str) -> str:
     slug = re.sub(r"[^\w\-]+", "-", value.strip().lower())
@@ -31,6 +29,8 @@ def estimate_tokens(text: str, model: str | None = None) -> int:
     if not text.strip():
         return 0
     try:
+        import tiktoken
+
         encoding = tiktoken.encoding_for_model(model or "gpt-4o-mini")
         return len(encoding.encode(text))
     except Exception:

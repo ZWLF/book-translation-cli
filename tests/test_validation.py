@@ -7,6 +7,7 @@ from booksmith.publishing.validation import (
     summarize_visual_blockers,
     validate_epub_output,
     validate_primary_output,
+    validate_publishing_redlines,
 )
 
 
@@ -106,3 +107,99 @@ def test_summarize_visual_blockers_defaults_to_zero_when_no_blockers() -> None:
     summary = summarize_visual_blockers([])
     assert summary["visual_blocker_count"] == 0
     assert summary["blockers"] == []
+
+
+def test_validate_publishing_redlines_reports_blocking_text_and_title_artifacts(
+    tmp_path: Path,
+) -> None:
+    text_path = tmp_path / "translated.txt"
+    chapters_path = tmp_path / "final_chapters.jsonl"
+    text_path.write_text(
+        "\n".join(
+            [
+                "第一章：中文标题",
+                "",
+                "**重点句**",
+                "",
+                "***",
+                "",
+                "42",
+                "",
+                "This should have been translated.",
+                "",
+                "239 Musk (@elonmusk), X account.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    chapters_path.write_text(
+        '{"chapter_id":"c1","chapter_index":0,"title":"Obsess for Success","text":"正文"}\n',
+        encoding="utf-8",
+    )
+
+    report = validate_publishing_redlines(
+        text_path=text_path,
+        chapters_path=chapters_path,
+    )
+
+    assert report["passed"] is False
+    assert report["markdown_artifact_count"] == 2
+    assert report["orphan_numeric_line_count"] == 1
+    assert report["english_body_line_count"] == 1
+    assert report["english_title_line_count"] == 1
+    assert report["blocker_count"] == 5
+
+
+def test_validate_publishing_redlines_allows_reference_lines_and_clean_titles(
+    tmp_path: Path,
+) -> None:
+    text_path = tmp_path / "translated.txt"
+    chapters_path = tmp_path / "final_chapters.jsonl"
+    text_path.write_text(
+        "\n".join(
+            [
+                "第一章：中文标题",
+                "",
+                "这是一段已经翻译好的正文。",
+                "",
+                "239 Musk (@elonmusk), X account.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    chapters_path.write_text(
+        '{"chapter_id":"c1","chapter_index":0,"title":"第一章：中文标题","text":"正文"}\n',
+        encoding="utf-8",
+    )
+
+    report = validate_publishing_redlines(
+        text_path=text_path,
+        chapters_path=chapters_path,
+    )
+
+    assert report["passed"] is True
+    assert report["blocker_count"] == 0
+
+
+def test_validate_publishing_redlines_prefers_translated_title_fields(
+    tmp_path: Path,
+) -> None:
+    text_path = tmp_path / "translated.txt"
+    chapters_path = tmp_path / "revised_chapters.jsonl"
+    text_path.write_text("痴迷于成功\n\n正文已翻译。\n", encoding="utf-8")
+    chapters_path.write_text(
+        (
+            '{"chapter_id":"c1","chapter_index":0,'
+            '"source_title":"Obsess for Success",'
+            '"translated_title":"痴迷于成功","blocks":[],"assets":[]}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    report = validate_publishing_redlines(
+        text_path=text_path,
+        chapters_path=chapters_path,
+    )
+
+    assert report["passed"] is True
+    assert report["english_title_line_count"] == 0

@@ -193,3 +193,4 @@ class PublishingGateInputs:
     layout_score: float
     source_style_alignment_score: float
     epub_integrity_score: float
+    redline_blocker_count: int = 0

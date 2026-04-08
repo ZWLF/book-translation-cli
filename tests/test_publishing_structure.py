@@ -155,3 +155,62 @@ def test_structure_builder_preserves_caption_only_asset_anchor() -> None:
     assert chapter.assets[0].block_anchor_id == caption_block.block_id
     assert chapter.source_title is None
     assert chapter.translated_title == "Images"
+
+
+def test_structure_builder_strips_wrapper_lines_and_extracts_part_title() -> None:
+    chapter = build_structured_chapter(
+        artifact=PublishingChapterArtifact(
+            chapter_id="part-1",
+            chapter_index=0,
+            title="Part I: Pursue Purpose",
+            text=(
+                "书籍：《示例图书》\n"
+                "章节：关于本书\n"
+                "索引：0\n\n"
+                "第一部分：追求目标\n\n"
+                "这是正文开篇。"
+            ),
+        ),
+        source_text="Part I: Pursue Purpose\nOpening body.",
+        source_assets=[],
+        source_title="Part I: Pursue Purpose",
+    )
+
+    assert chapter.translated_title == "第一部分：追求目标"
+    assert [block.kind for block in chapter.blocks] == ["paragraph"]
+    assert [block.text for block in chapter.blocks] == ["这是正文开篇。"]
+
+
+def test_structure_builder_promotes_markdown_heading_into_heading_block() -> None:
+    chapter = build_structured_chapter(
+        artifact=PublishingChapterArtifact(
+            chapter_id="notes",
+            chapter_index=1,
+            title="Notes",
+            text="**重点标注（Highlights）**\n重点标注用于总结或强调某个观点。",
+        ),
+        source_text="Highlights\nUseful note.",
+        source_assets=[],
+    )
+
+    assert [block.kind for block in chapter.blocks] == ["heading", "paragraph"]
+    assert [block.text for block in chapter.blocks] == [
+        "重点标注（Highlights）",
+        "重点标注用于总结或强调某个观点。",
+    ]
+
+
+def test_structure_builder_merges_orphan_numeric_lines_into_adjacent_text() -> None:
+    chapter = build_structured_chapter(
+        artifact=PublishingChapterArtifact(
+            chapter_id="refs",
+            chapter_index=2,
+            title="References",
+            text="第一句。\n3\n第二句。\n4",
+        ),
+        source_text="First sentence.\nSecond sentence.",
+        source_assets=[],
+    )
+
+    assert [block.kind for block in chapter.blocks] == ["paragraph"]
+    assert chapter.blocks[0].text == "第一句。 3\n第二句。 4"

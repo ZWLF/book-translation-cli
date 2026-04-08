@@ -37,7 +37,11 @@ from booksmith.output.polished_pdf import (
     build_printable_book_from_structured_book,
     render_polished_pdf,
 )
-from booksmith.output.title_enrichment import enrich_missing_titles
+from booksmith.output.title_enrichment import (
+    apply_title_overrides_to_printable_book,
+    apply_title_overrides_to_structured_book,
+    enrich_missing_titles,
+)
 from booksmith.pipeline import _build_provider, _extract_book, _load_mapping
 from booksmith.providers.base import BaseProvider
 from booksmith.publishing import deep_review as deep_review_module
@@ -60,6 +64,7 @@ from booksmith.publishing.structure import build_structured_chapter
 from booksmith.publishing.validation import (
     summarize_visual_blockers,
     validate_primary_output,
+    validate_publishing_redlines,
 )
 from booksmith.state.workspace import Workspace
 from booksmith.translation.orchestrator import translate_chunks
@@ -1022,23 +1027,13 @@ async def _rebuild_stable_publishing_outputs(
     should_render_epub = bool(
         selection.primary_output == "epub" or "epub" in selection.additional_outputs
     )
-    if deep_review_book is not None:
-        final_text = assemble_structured_publishing_output_text(deep_review_book)
-    else:
-        final_text = assemble_publishing_output_text(chapters)
-    temp_text_path = text_path.with_suffix(".txt.tmp")
-    temp_pdf_path = pdf_path.with_suffix(".pdf.tmp")
-    temp_epub_path = epub_path.with_suffix(".epub.tmp")
-    temp_text_path.write_text(final_text, encoding="utf-8")
-
-    if not should_render_pdf and not should_render_epub:
-        temp_text_path.replace(text_path)
-        return
-
-    printable_book = None
     structured_book = deep_review_book or _build_structured_book_from_artifacts(
         chapters=deep_review_chapters or chapters
     )
+    title_overrides = workspace.read_title_translations()
+    structured_book = apply_title_overrides_to_structured_book(structured_book, title_overrides)
+
+    printable_book = None
     if should_render_pdf:
         if deep_review_book is not None:
             printable_book = build_printable_book_from_structured_book(
@@ -1047,7 +1042,7 @@ async def _rebuild_stable_publishing_outputs(
                     "estimated_cost_usd": summary_metrics["estimated_cost_usd"],
                 },
                 book=deep_review_book,
-                title_overrides=workspace.read_title_translations(),
+                title_overrides=title_overrides,
             )
         else:
             printable_book = build_printable_book_from_artifacts(
@@ -1056,7 +1051,7 @@ async def _rebuild_stable_publishing_outputs(
                     "estimated_cost_usd": summary_metrics["estimated_cost_usd"],
                 },
                 chapters=deep_review_chapters or chapters,
-                title_overrides=workspace.read_title_translations(),
+                title_overrides=title_overrides,
                 deep_review_decisions=deep_review_decisions,
             )
         api_key: str | None = None
@@ -1072,6 +1067,29 @@ async def _rebuild_stable_publishing_outputs(
             api_key=api_key,
             max_concurrency=config.max_concurrency,
             max_attempts=config.max_attempts,
+        )
+        title_overrides = workspace.read_title_translations()
+        printable_book = apply_title_overrides_to_printable_book(printable_book, title_overrides)
+        structured_book = apply_title_overrides_to_structured_book(structured_book, title_overrides)
+
+    final_text = (
+        assemble_structured_publishing_output_text(structured_book)
+        if deep_review_book is not None or title_overrides
+        else assemble_publishing_output_text(chapters)
+    )
+    temp_text_path = text_path.with_suffix(".txt.tmp")
+    temp_pdf_path = pdf_path.with_suffix(".pdf.tmp")
+    temp_epub_path = epub_path.with_suffix(".epub.tmp")
+    temp_text_path.write_text(final_text, encoding="utf-8")
+
+    if not should_render_pdf and not should_render_epub:
+        temp_text_path.replace(text_path)
+        return
+
+    if deep_review_book is not None:
+        workspace.write_publishing_jsonl(
+            workspace.publishing_deep_review_chapters_path,
+            [chapter.model_dump() for chapter in structured_book.chapters],
         )
     try:
         if should_render_pdf and printable_book is not None:
@@ -1167,6 +1185,16 @@ def _evaluate_candidate_release_gate(
     }
     visual_summary = summarize_visual_blockers([])
     visual_blocker_count = int(visual_summary["visual_blocker_count"])
+    chapter_titles_path = (
+        workspace.publishing_deep_review_chapters_path
+        if workspace.publishing_deep_review_chapters_path.exists()
+        else workspace.publishing_final_chapters_path
+    )
+    redline_summary = validate_publishing_redlines(
+        text_path=workspace.publishing_candidate_final_text_path,
+        chapters_path=chapter_titles_path,
+    )
+    redline_blocker_count = int(redline_summary["blocker_count"])
     zero_issue_build = (
         unresolved_count == 0
         and high_severity_count == 0
@@ -1176,8 +1204,20 @@ def _evaluate_candidate_release_gate(
         and bool(primary_validation["passed"])
         and bool(cross_output_validation["passed"])
         and visual_blocker_count == 0
+        and redline_blocker_count == 0
     )
-    score_floor = 9.2 if zero_issue_build else 8.4
+    score_floor = _estimate_gate_score(
+        unresolved_count=unresolved_count,
+        high_severity_count=high_severity_count,
+        structural_issue_count=structural_issue_count,
+        citation_issue_count=citation_issue_count,
+        image_or_caption_issue_count=image_or_caption_issue_count,
+        visual_blocker_count=visual_blocker_count,
+        redline_blocker_count=redline_blocker_count,
+        primary_output_validation_passed=bool(primary_validation["passed"]),
+        cross_output_validation_passed=bool(cross_output_validation["passed"]),
+        zero_issue_build=zero_issue_build,
+    )
     gate_report = evaluate_release_gate(
         PublishingGateInputs(
             unresolved_count=unresolved_count,
@@ -1194,6 +1234,7 @@ def _evaluate_candidate_release_gate(
             layout_score=score_floor,
             source_style_alignment_score=score_floor,
             epub_integrity_score=score_floor,
+            redline_blocker_count=redline_blocker_count,
         )
     )
     gate_report.update(
@@ -1207,10 +1248,41 @@ def _evaluate_candidate_release_gate(
             "primary_output_validation": primary_validation,
             "cross_output_validation": cross_output_validation,
             "visual_summary": visual_summary,
+            "redline_summary": redline_summary,
             "rollback_level_required": _gate_rollback_level(final_report=final_report),
         }
     )
     return gate_report
+
+
+def _estimate_gate_score(
+    *,
+    unresolved_count: int,
+    high_severity_count: int,
+    structural_issue_count: int,
+    citation_issue_count: int,
+    image_or_caption_issue_count: int,
+    visual_blocker_count: int,
+    redline_blocker_count: int,
+    primary_output_validation_passed: bool,
+    cross_output_validation_passed: bool,
+    zero_issue_build: bool,
+) -> float:
+    if zero_issue_build:
+        return 9.6
+
+    penalty = (
+        unresolved_count * 0.35
+        + high_severity_count * 0.55
+        + structural_issue_count * 0.4
+        + citation_issue_count * 0.2
+        + image_or_caption_issue_count * 0.2
+        + visual_blocker_count * 0.3
+        + redline_blocker_count * 0.25
+        + (0.0 if primary_output_validation_passed else 1.5)
+        + (0.0 if cross_output_validation_passed else 0.8)
+    )
+    return round(max(0.0, 9.6 - penalty), 3)
 
 
 def _publishing_output_path_for_kind(
