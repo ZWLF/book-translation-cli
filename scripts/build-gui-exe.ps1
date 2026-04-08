@@ -5,14 +5,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location -LiteralPath $root
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location -LiteralPath $repoRoot
 
 $python = "python"
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$workPath = Join-Path $root "build\gui_build_$stamp"
-$tmpDistPath = Join-Path $root "dist\_tmp_gui_$stamp"
-$finalDistPath = Join-Path $root "dist"
+$workPath = Join-Path $repoRoot "build\gui_build_$stamp"
+$tmpDistPath = Join-Path $repoRoot "dist\_tmp_gui_$stamp"
+$finalDistPath = Join-Path $repoRoot "dist"
 
 Write-Host "[Booksmith] Building GUI EXE with PyInstaller..."
 
@@ -20,6 +20,7 @@ $pyiArgs = @(
     "--noconfirm",
     "--clean",
     "--windowed",
+    "--specpath", "$workPath",
     "--exclude-module", "PyQt5",
     "--exclude-module", "PyQt6",
     "--exclude-module", "PySide2",
@@ -34,7 +35,7 @@ $pyiArgs = @(
     "--name", "Booksmith-GUI",
     "--workpath", "$workPath",
     "--distpath", "$tmpDistPath",
-    "--paths", "$root\src"
+    "--paths", "$repoRoot\src"
 )
 
 if ($OneFile) {
@@ -44,7 +45,7 @@ if ($OneFile) {
     $pyiArgs += "--onedir"
 }
 
-$pyiArgs += "$root\src\booksmith\gui\__main__.py"
+$pyiArgs += "$repoRoot\src\booksmith\gui\__main__.py"
 
 try {
     & $python -m PyInstaller @pyiArgs
