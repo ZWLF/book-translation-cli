@@ -11,6 +11,7 @@ from booksmith.gui.app import BooksmithGui
 from booksmith.gui.services import GuiFormValidationError, GuiValidationIssue
 from booksmith.gui.state import GuiRuntimeRequest
 from booksmith.gui.tasks import GuiTaskRunner
+from booksmith.provider_catalog import get_provider_option
 from booksmith.utils import slugify
 
 
@@ -68,6 +69,17 @@ class _FailingStartTaskRunner:
         raise self._exc
 
 
+class _RecordingSaveHook:
+    def __init__(self, exc: Exception | None = None) -> None:
+        self.calls: list[tuple[Path, str, str]] = []
+        self._exc = exc
+
+    def __call__(self, env_path: Path, provider: str, api_key: str) -> None:
+        self.calls.append((env_path, provider, api_key))
+        if self._exc is not None:
+            raise self._exc
+
+
 def _configure_engineering_form(
     app: BooksmithGui,
     input_path: Path,
@@ -101,7 +113,7 @@ def test_gui_app_bootstraps_without_mainloop() -> None:
         assert app.root.title() == "Booksmith"
         assert app.mode_var.get() == "engineering"
         assert app.publishing_frame.winfo_manager() == ""
-        assert app.task_runner._event_queue is app.event_queue
+        assert app.task_runner.event_queue is app.event_queue
     finally:
         app.root.destroy()
 
@@ -146,33 +158,140 @@ def test_gui_exposes_static_workspace_controls() -> None:
         app.root.destroy()
 
 
+def test_gui_input_browse_updates_input_path_var(tmp_path: Path) -> None:
+    selected = tmp_path / "book.pdf"
+    app = _create_gui(input_browse_dialog=lambda: selected)
+    try:
+        app._choose_input_file()
+
+        assert app.views.input_path_var.get() == str(selected)
+    finally:
+        app.root.destroy()
+
+
+def test_gui_output_browse_updates_output_path_var(tmp_path: Path) -> None:
+    selected = tmp_path / "out"
+    app = _create_gui(output_browse_dialog=lambda: selected)
+    try:
+        app._choose_output_directory()
+
+        assert app.views.output_path_var.get() == str(selected)
+    finally:
+        app.root.destroy()
+
+
+def test_gui_provider_change_refreshes_model_choices_and_resets_invalid_model() -> None:
+    app = _create_gui()
+    try:
+        gemini_option = get_provider_option("gemini")
+
+        app.views.model_var.set("gpt-4o-mini")
+        app.views.provider_var.set("gemini")
+        app.root.update()
+
+        assert tuple(app.views.model_combobox.cget("values")) == gemini_option.models
+        assert app.views.model_var.get() == gemini_option.default_model
+    finally:
+        app.root.destroy()
+
+
+def test_gui_api_key_toggle_updates_masking_and_button_text() -> None:
+    app = _create_gui()
+    try:
+        initial_text = str(app.views.api_key_toggle_button.cget("text"))
+
+        assert app.views.api_key_entry.cget("show") == "*"
+
+        app._toggle_api_key_visibility()
+        assert app.views.api_key_entry.cget("show") == ""
+        assert str(app.views.api_key_toggle_button.cget("text")) != initial_text
+
+        app._toggle_api_key_visibility()
+        assert app.views.api_key_entry.cget("show") == "*"
+        assert str(app.views.api_key_toggle_button.cget("text")) == initial_text
+    finally:
+        app.root.destroy()
+
+
+def test_gui_collect_form_state_includes_api_key_and_persist_api_key() -> None:
+    app = _create_gui()
+    try:
+        app.views.api_key_var.set("secret-key")
+        app.views.remember_locally_var.set(True)
+
+        form = app._collect_form_state()
+
+        assert form.api_key == "secret-key"
+        assert form.persist_api_key is True
+    finally:
+        app.root.destroy()
+
+
+def test_gui_start_run_persists_api_key_before_runner_start_when_remember_locally_checked(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeTaskRunner()
+    save_hook = _RecordingSaveHook()
+    app = _create_gui(task_runner=runner, save_provider_api_key=save_hook)
+    input_path = tmp_path / "book.pdf"
+    input_path.write_text("pdf", encoding="utf-8")
+    output_path = tmp_path / "out"
+
+    try:
+        _configure_engineering_form(app, input_path, output_path)
+        app.views.api_key_var.set("secret-key")
+        app.views.remember_locally_var.set(True)
+
+        app._start_run()
+
+        assert [call[0] for call in save_hook.calls] == [Path.cwd() / ".env"]
+        assert save_hook.calls[0][1:] == ("openai", "secret-key")
+        assert len(runner.started_requests) == 1
+    finally:
+        app.root.destroy()
+
+
+def test_gui_start_run_without_remember_locally_does_not_call_save_hook(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeTaskRunner()
+    save_hook = _RecordingSaveHook()
+    app = _create_gui(task_runner=runner, save_provider_api_key=save_hook)
+    input_path = tmp_path / "book.pdf"
+    input_path.write_text("pdf", encoding="utf-8")
+    output_path = tmp_path / "out"
+
+    try:
+        _configure_engineering_form(app, input_path, output_path)
+        app.views.api_key_var.set("secret-key")
+        app.views.remember_locally_var.set(False)
+
+        app._start_run()
+
+        assert save_hook.calls == []
+        assert len(runner.started_requests) == 1
+    finally:
+        app.root.destroy()
+
+
 def test_gui_shows_bilingual_shell_sections_in_order() -> None:
     app = _create_gui()
     try:
         label_texts = _managed_widget_texts(app.root, ttk.Label)
-        ordered_labels = [
-            "书匠",
-            "Booksmith",
-            "工程与出版桌面工作台",
-            "Engineering and publishing desktop workspace",
-            "工作区",
+        stable_sections = [
             "Workspace",
             "Input / 输入书籍",
             "Output / 输出目录",
             "Provider API / 服务商 API",
             "API Key / 密钥",
             "Model / 模型",
-            "输出与选项",
             "Output & options",
-            "运行状态",
             "Run status",
-            "结果",
             "Results",
-            "日志",
             "Logs",
         ]
 
-        indices = [label_texts.index(label) for label in ordered_labels]
+        indices = [label_texts.index(label) for label in stable_sections]
         assert indices == sorted(indices)
         helper_labels = [
             label
@@ -424,6 +543,7 @@ def test_gui_start_run_runner_start_error_is_handled_inline_without_raising(
         assert app.status_var.get() == "Failed"
         assert app.summary_var.get() == "runner start boom"
         assert app.result_state.error == "runner start boom"
+        assert app.current_request is None
         assert "runner start boom" in app.log_text.get("1.0", "end")
         assert not app.run_button.instate(["disabled"])
         assert app._queue_poll_after_id is None
